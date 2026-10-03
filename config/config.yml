@@ -1,0 +1,55 @@
+database: data/security_agent.db
+logging_level: INFO
+# Set the actual server ID. A zero placeholder prevents production startup.
+guilds:
+  0:
+    staff_role_id: 1546592219379666996
+    verification_channel_id: 0
+    modlog_channel_id: 0
+    join_roles:
+      - 1546592219220152341
+      - 1546592219220152345
+      - 1546592219274940457
+      - 1546592219274940464
+      - 1546592219325145179
+      - 1546592219325145181
+      - 1546592219325145180
+    verification:
+      timeout_days: 7
+      captcha_ttl_seconds: 600
+      max_attempts: 5
+      resend_cooldown_seconds: 60
+      give_join_roles_before_verification: false
+    moderation:
+      warn_actions:
+        3: {timeout_minutes: 10}
+        5: {timeout_minutes: 60}
+        7: {timeout_minutes: 1440}
+        10: {notify_staff: true, ban: false}
+    profanity:
+      blacklist: config/profanity.json
+      whitelist: config/whitelist.json
+      ignored_channels: []
+      ignored_roles: []
+      staff_immune: false
+    xp:
+      message_cooldown_seconds: 60
+      min_message_length: 5
+      xp_min: 1
+      xp_max: 3
+      ignored_channels: []
+      ignored_roles: []
+      command_prefixes: ["/", "!", "?"]
+      duplicate_window_seconds: 3600
+      spam_window_seconds: 10
+      spam_max_messages: 5
+      settlement_seconds: 3
+    levels:
+      repair_interval_seconds: 900
+      sync_delay_seconds: 0.5
+      brackets:
+        - {min: 0, max: 4, roles: [1546592219220152347, 1546592219274940458]}
+        - {min: 5, max: 9, roles: [1546592219220152348, 1546592219274940460]}
+        - {min: 10, max: 14, roles: [1546592219220152346, 1546592219274940459]}
+        - {min: 15, max: 19, roles: [1546592219220152349, 1546592219274940461]}
+        - {min: 20, max: 1000, roles: [1546592219274940456, 1546592219274940462]}
