@@ -156,7 +156,9 @@ class SecurityBot(commands.Bot):
         async with self.repair_locks[guild.id]:
             scan_at = time.time()
             # Member chunks let us catch joins missed while the gateway was offline.
-            await guild.chunk(cache=True)
+            if not guild.chunked:
+                async with asyncio.timeout(45):
+                    await guild.chunk(cache=True)
             checkpoint = await self.db.rows("SELECT scanned_at FROM guild_state WHERE guild_id=?", (guild.id,))
             since = checkpoint[0]["scanned_at"] if checkpoint else self.started_at
             for member in guild.members:
@@ -169,28 +171,32 @@ class SecurityBot(commands.Bot):
             rows = await self.db.rows("SELECT user_id FROM verification WHERE guild_id=?", (guild.id,))
             errors, processed = 0, 0
             for row in rows:
+                if guild.id in self.verification.bulk_guilds:
+                    await self.audit(guild.id, 0, 0, "role_repair_paused", "Manual verification requested")
+                    return
                 uid = row["user_id"]
                 try:
-                    member = await guild.fetch_member(uid)
-                    if member.bot:
-                        continue
-                    async with self.member_lock(guild.id, uid):
-                        state = await self.db.state(guild.id, uid)
-                        if state["status"] == "passed":
-                            await self.verification.complete(member)
-                        elif state["status"] == "verified":
-                            if not await self.roles.apply(member, verified=True):
-                                errors += 1
-                        else:
-                            # Renew near expiry, and repair roles even while timeout is still active.
-                            current = member.timed_out_until.timestamp() if member.timed_out_until else 0
-                            if current < time.time()+86400:
-                                await self.verification.restrict(member)
+                    async with asyncio.timeout(45):
+                        member = guild.get_member(uid) or await guild.fetch_member(uid)
+                        if member.bot:
+                            continue
+                        async with self.member_lock(guild.id, uid):
+                            state = await self.db.state(guild.id, uid)
+                            if state["status"] == "passed":
+                                await self.verification.complete(member)
+                            elif state["status"] == "verified":
+                                if not await self.roles.apply(member, verified=True):
+                                    errors += 1
                             else:
-                                await self.roles.apply(member, verified=False)
-                            if not state["last_sent"]:
-                                await self.verification.deliver(member)
-                        processed += 1
+                                # Renew near expiry, and repair roles even while timeout is still active.
+                                current = member.timed_out_until.timestamp() if member.timed_out_until else 0
+                                if current < time.time()+86400:
+                                    await self.verification.restrict(member)
+                                else:
+                                    await self.roles.apply(member, verified=False)
+                                if not state["last_sent"]:
+                                    await self.verification.deliver(member)
+                            processed += 1
                 except discord.NotFound:
                     continue
                 except Exception as exc:
@@ -223,16 +229,21 @@ class SecurityBot(commands.Bot):
                 continue
             rows = await self.db.rows("SELECT * FROM moderation_actions WHERE guild_id=? AND delivered=0 "
                                        "ORDER BY id LIMIT 10", (gid,))
-            for row in rows:
-                try:
-                    await channel.send(embed=embed(f"Событие #{row['id']}: **{row['action']}**\n"
-                                                   f"Участник: {row['user_id']} · Сотрудник: {row['moderator_id']}\n"
-                                                   f"{discord.utils.escape_markdown(row['detail'])}"))
+            if not rows:
+                continue
+            try:
+                batch = embed("События модерации. Полные записи доступны через /modlog.")
+                for row in rows:
+                    batch.add_field(name=f"#{row['id']} {row['action']}",
+                                    value=f"Участник: {row['user_id']} · Сотрудник: {row['moderator_id']}\n"
+                                          + discord.utils.escape_markdown(row['detail'])[:350], inline=False)
+                async with asyncio.timeout(30):
+                    await channel.send(embed=batch)
+                for row in rows:
                     await self.db.execute("UPDATE moderation_actions SET delivered=1 WHERE guild_id=? AND id=?",
-                                           (gid, row["id"]))
-                except discord.HTTPException as exc:
-                    LOG.warning("modlog_delivery_error guild=%s type=%s", gid, type(exc).__name__)
-                    break
+                                          (gid, row["id"]))
+            except (discord.HTTPException, TimeoutError) as exc:
+                LOG.warning("modlog_delivery_error guild=%s type=%s", gid, type(exc).__name__)
 
     async def on_error(self, event, *args, **kwargs):
         # Event payloads include private messages. Never serialize args or exception text.
