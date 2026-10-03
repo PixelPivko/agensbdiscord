@@ -1,4 +1,6 @@
+import asyncio
 import time
+from types import SimpleNamespace
 from datetime import datetime, timezone
 
 import discord
@@ -6,6 +8,8 @@ from discord import app_commands
 from discord.ext import commands
 
 from cogs.common import embed, guard, reply, staff_check
+from services.manual_verify import manually_verify, resolve_member
+from services.rules import is_staff
 
 
 class CaptchaModal(discord.ui.Modal, title="ПОДТВЕРДИТЕ, ЧТО ВЫ НЕ БОТ"):
@@ -73,6 +77,68 @@ class Verification(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
+        self.bulk_guilds = set()
+
+    @app_commands.command(name="verify", description="Верифицировать вручную: имя, username, @участник, ID или all")
+    @app_commands.describe(target="Точное имя, username, упоминание, ID участника или all для всех")
+    @staff_check()
+    async def verify(self, interaction: discord.Interaction, target: str):
+        await interaction.response.defer(ephemeral=True)
+        if target.strip().casefold() == "all":
+            gid = interaction.guild_id
+            if gid in self.bulk_guilds:
+                return await reply(interaction, "Массовая верификация уже выполняется.")
+            self.bulk_guilds.add(gid)
+            try:
+                await self.bot.audit(gid, 0, interaction.user.id, "verify_all_started")
+                self.bot.spawn(self.verify_all(interaction.guild, interaction.user.id))
+            except BaseException:
+                self.bulk_guilds.discard(gid)
+                raise
+            return await reply(interaction, "Массовая верификация запущена без captcha. "
+                               "Боты и недоступные по иерархии участники будут пропущены. Итог — в modlog.")
+        await interaction.guild.chunk(cache=True)
+        member = resolve_member(interaction.guild.members, target)
+        member = await interaction.guild.fetch_member(member.id)
+        actor = await interaction.guild.fetch_member(interaction.user.id)
+        context = SimpleNamespace(guild=interaction.guild, guild_id=interaction.guild_id,
+                                  user=actor, client=self.bot)
+        async with self.bot.member_lock(interaction.guild_id, member.id):
+            ok = await manually_verify(self.bot, context, member)
+        await reply(interaction, f"Участник {member.id} верифицирован вручную. "
+                    + ("Стартовые роли и роли уровня выданы." if ok else "Часть ролей требует исправления; см. /modlog."))
+
+    async def verify_all(self, guild, actor_id):
+        done = partial = skipped = failed = 0
+        try:
+            await guild.chunk(cache=True)
+            members = [m.id for m in guild.members if not m.bot]
+            for uid in members:
+                actor = await guild.fetch_member(actor_id)
+                if not is_staff(actor, self.bot.cfg(guild.id)):
+                    await self.bot.audit(guild.id, 0, actor_id, "verify_all_stopped", "Staff access revoked")
+                    break
+                try:
+                    member = await guild.fetch_member(uid)
+                    context = SimpleNamespace(guild=guild, guild_id=guild.id, user=actor, client=self.bot)
+                    async with self.bot.member_lock(guild.id, uid):
+                        ok = await manually_verify(self.bot, context, member)
+                    done += int(ok)
+                    partial += int(not ok)
+                except app_commands.CheckFailure as exc:
+                    skipped += 1
+                    await self.bot.audit(guild.id, uid, actor_id, "manual_verify_skipped", str(exc))
+                except Exception as exc:
+                    failed += 1
+                    await self.bot.audit(guild.id, uid, actor_id, "manual_verify_error", type(exc).__name__)
+                await asyncio.sleep(self.bot.cfg(guild.id)["levels"]["sync_delay_seconds"])
+        except Exception as exc:
+            failed += 1
+            await self.bot.audit(guild.id, 0, actor_id, "verify_all_error", type(exc).__name__)
+        finally:
+            self.bulk_guilds.discard(guild.id)
+            await self.bot.audit(guild.id, 0, actor_id, "verify_all_finished",
+                                 f"roles_ok={done}; role_repair={partial}; skipped={skipped}; errors={failed}")
 
     def register_views(self):
         for guild_id in self.bot.config["guilds"]:
