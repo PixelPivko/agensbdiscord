@@ -78,6 +78,54 @@ class Verification(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.bulk_guilds = set()
+        self.bulk_tasks = {}
+        self.bulk_progress = {}
+        self.member_deadline = 45
+        self.chunk_deadline = 45
+
+    def new_progress(self, actor_id):
+        return dict(actor=actor_id, phase="ожидание сверки ролей", total=0, done=0, partial=0,
+                    skipped=0, failed=0, current=0, started=time.monotonic())
+
+    def progress_text(self, gid):
+        state = self.bulk_progress.get(gid)
+        if not state:
+            return "Массовая проверка в этом запуске бота ещё не выполнялась."
+        processed = state["done"] + state["partial"] + state["skipped"] + state["failed"]
+        return (f"Состояние: {state['phase']}\nОбработано: {processed}/{state['total']}\n"
+                f"Роли выданы: {state['done']}; нужна сверка: {state['partial']}\n"
+                f"Пропущено: {state['skipped']}; ошибок: {state['failed']}\n"
+                f"Текущий ID: {state['current'] or '—'}\n"
+                f"Прошло секунд: {int(time.monotonic()-state['started'])}")
+
+    def bulk_finished(self, gid, task):
+        if self.bulk_tasks.get(gid) is task:
+            self.bulk_tasks.pop(gid, None)
+            self.bulk_guilds.discard(gid)
+            if task.cancelled():
+                self.bulk_progress[gid]["phase"] = "остановлено"
+
+    @verification.command(name="status", description="Показать прогресс массовой верификации")
+    @staff_check()
+    async def bulk_status(self, interaction: discord.Interaction):
+        # No database query, member lock, chunk or REST member fetch on this path.
+        await reply(interaction, self.progress_text(interaction.guild_id))
+
+    @verification.command(name="stop", description="Остановить массовую верификацию")
+    @staff_check()
+    async def bulk_stop(self, interaction: discord.Interaction):
+        gid = interaction.guild_id
+        task = self.bulk_tasks.get(gid)
+        if task is None or task.done():
+            return await reply(interaction, "Активной массовой верификации нет.")
+        if (interaction.user.id != self.bulk_progress[gid]["actor"]
+                and interaction.user.id != interaction.guild.owner_id
+                and not interaction.user.guild_permissions.administrator):
+            raise app_commands.CheckFailure("Остановить задачу может её инициатор или администратор.")
+        task.cancel()
+        self.bulk_progress[gid]["phase"] = "остановка"
+        await reply(interaction, "Остановка запрошена. Уже сохранённые verified и роли остаются. "
+                    "Незавершённые роли проверит обычная сверка.")
 
     @app_commands.command(name="verify", description="Верифицировать вручную: имя, username, @участник, ID или all")
     @app_commands.describe(target="Точное имя, username, упоминание, ID участника или all для всех")
@@ -89,15 +137,22 @@ class Verification(commands.Cog):
             if gid in self.bulk_guilds:
                 return await reply(interaction, "Массовая верификация уже выполняется.")
             self.bulk_guilds.add(gid)
+            self.bulk_progress[gid] = self.new_progress(interaction.user.id)
             try:
+                # Return a visible response before starting any gateway/API or database work.
+                await reply(interaction, "Массовая верификация запущена. Прогресс: `/verification status`. "
+                            "Остановка: `/verification stop`. Выдача ролей идёт последовательно и может занять несколько минут.")
                 await self.bot.audit(gid, 0, interaction.user.id, "verify_all_started")
-                self.bot.spawn(self.verify_all(interaction.guild, interaction.user.id))
+                task = self.bot.spawn(self.verify_all(interaction.guild, interaction.user.id))
+                self.bulk_tasks[gid] = task
+                task.add_done_callback(lambda finished: self.bulk_finished(gid, finished))
             except BaseException:
                 self.bulk_guilds.discard(gid)
                 raise
-            return await reply(interaction, "Массовая верификация запущена без captcha. "
-                               "Боты и недоступные по иерархии участники будут пропущены. Итог — в modlog.")
-        await interaction.guild.chunk(cache=True)
+            return
+        if not interaction.guild.chunked:
+            async with asyncio.timeout(self.chunk_deadline):
+                await interaction.guild.chunk(cache=True)
         member = resolve_member(interaction.guild.members, target)
         member = await interaction.guild.fetch_member(member.id)
         actor = await interaction.guild.fetch_member(interaction.user.id)
@@ -109,36 +164,58 @@ class Verification(commands.Cog):
                     + ("Стартовые роли и роли уровня выданы." if ok else "Часть ролей требует исправления; см. /modlog."))
 
     async def verify_all(self, guild, actor_id):
-        done = partial = skipped = failed = 0
+        state = self.bulk_progress.setdefault(guild.id, self.new_progress(actor_id))
         try:
-            await guild.chunk(cache=True)
-            members = [m.id for m in guild.members if not m.bot]
-            for uid in members:
-                actor = await guild.fetch_member(actor_id)
-                if not is_staff(actor, self.bot.cfg(guild.id)):
-                    await self.bot.audit(guild.id, 0, actor_id, "verify_all_stopped", "Staff access revoked")
-                    break
-                try:
-                    member = await guild.fetch_member(uid)
-                    context = SimpleNamespace(guild=guild, guild_id=guild.id, user=actor, client=self.bot)
-                    async with self.bot.member_lock(guild.id, uid):
-                        ok = await manually_verify(self.bot, context, member)
-                    done += int(ok)
-                    partial += int(not ok)
-                except app_commands.CheckFailure as exc:
-                    skipped += 1
-                    await self.bot.audit(guild.id, uid, actor_id, "manual_verify_skipped", str(exc))
-                except Exception as exc:
-                    failed += 1
-                    await self.bot.audit(guild.id, uid, actor_id, "manual_verify_error", type(exc).__name__)
-                await asyncio.sleep(self.bot.cfg(guild.id)["levels"]["sync_delay_seconds"])
+            async with self.bot.repair_locks[guild.id]:
+                state["phase"] = "загрузка участников"
+                if not guild.chunked:
+                    async with asyncio.timeout(self.chunk_deadline):
+                        await guild.chunk(cache=True)
+                members = [m.id for m in guild.members if not m.bot]
+                state["total"] = len(members)
+                state["phase"] = "выдача ролей"
+                for uid in members:
+                    state["current"] = uid
+                    try:
+                        async with asyncio.timeout(self.member_deadline):
+                            actor = await guild.fetch_member(actor_id)
+                            if not is_staff(actor, self.bot.cfg(guild.id)):
+                                state["phase"] = "остановлено: staff-доступ отозван"
+                                break
+                            member = await guild.fetch_member(uid)
+                            context = SimpleNamespace(guild=guild, guild_id=guild.id, user=actor, client=self.bot)
+                            async with self.bot.member_lock(guild.id, uid):
+                                ok = await manually_verify(self.bot, context, member)
+                            state["done"] += int(ok)
+                            state["partial"] += int(not ok)
+                    except app_commands.CheckFailure as exc:
+                        state["skipped"] += 1
+                        await self.bot.audit(guild.id, uid, actor_id, "manual_verify_skipped", str(exc))
+                    except TimeoutError:
+                        state["failed"] += 1
+                        state["phase"] = "остановлено: Discord не ответил за 45 секунд"
+                        await self.bot.audit(guild.id, uid, actor_id, "verify_all_timeout", "Stopped; inspect status before retry")
+                        break
+                    except discord.HTTPException as exc:
+                        state["failed"] += 1
+                        state["phase"] = "остановлено: ошибка Discord"
+                        await self.bot.audit(guild.id, uid, actor_id, "manual_verify_error", type(exc).__name__)
+                        break
+                    await asyncio.sleep(max(1, self.bot.cfg(guild.id)["levels"]["sync_delay_seconds"]))
+                else:
+                    state["phase"] = "завершено"
+        except asyncio.CancelledError:
+            state["phase"] = "остановлено"
+            raise
         except Exception as exc:
-            failed += 1
+            state["failed"] += 1
+            state["phase"] = "остановлено: ошибка"
             await self.bot.audit(guild.id, 0, actor_id, "verify_all_error", type(exc).__name__)
         finally:
             self.bulk_guilds.discard(guild.id)
             await self.bot.audit(guild.id, 0, actor_id, "verify_all_finished",
-                                 f"roles_ok={done}; role_repair={partial}; skipped={skipped}; errors={failed}")
+                                 f"roles_ok={state['done']}; role_repair={state['partial']}; "
+                                 f"skipped={state['skipped']}; errors={state['failed']}; {state['phase']}")
 
     def register_views(self):
         for guild_id in self.bot.config["guilds"]:
