@@ -1,3 +1,6 @@
+import asyncio
+import time
+
 import discord
 
 from services.rules import role_ids_for_level
@@ -6,6 +9,15 @@ from services.rules import role_ids_for_level
 class RoleSync:
     def __init__(self, bot):
         self.bot = bot
+        self.request_lock = asyncio.Lock()
+        self.next_request_at = 0.0
+        self.request_interval = 0.5
+
+    async def pace(self):
+        # Shared across all role jobs in this bot, not just one bulk invocation.
+        async with self.request_lock:
+            await asyncio.sleep(max(0, self.next_request_at - time.monotonic()))
+            self.next_request_at = time.monotonic() + self.request_interval
 
     async def apply(self, member, *, verified: bool):
         cfg = self.bot.cfg(member.guild.id)
@@ -28,6 +40,7 @@ class RoleSync:
                                          f"Role {role_id}: missing, unsafe, or not assignable")
                     continue
                 try:
+                    await self.pace()
                     if adding:
                         await member.add_roles(role, reason="SecurityAgent: verified role synchronization")
                     else:
