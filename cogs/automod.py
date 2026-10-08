@@ -68,8 +68,10 @@ class Automod(commands.Cog):
                 await self.bot.roles.apply(message.author, verified=True)
         if warning_id:
             try:
-                await message.author.send(f"ТОРТИК PROJECT: предупреждение #{warning_id} за запрещённую лексику. "
-                                          f"Активных предупреждений: {count}.")
+                await message.author.send("Псс, дежурный ТОРТИК на связи. Давай без запрещённых слов — "
+                                          "хочется, чтобы в чате было уютно всем. "
+                                          f"Записал предупреждение #{warning_id} за лексику. "
+                                          f"Активных предупреждений: {count}. При повторениях возможны ограничения по правилам сервера.")
             except discord.HTTPException:
                 pass
         return True

@@ -128,7 +128,7 @@ class Database:
             if row and now - row["created_at"] < ttl and row["attempts"] < max_attempts:
                 return dict(row)
             if row and now - row["created_at"] < ttl:
-                raise ValueError("Попытки закончились. Дождитесь окончания окна проверки.")
+                raise ValueError("Попытки на этот пример закончились. Дождись окончания его срока и жми кнопку снова — выдадим свежий.")
             question, answer = captcha()
             nonce = secrets.token_hex(16)
             await db.execute("INSERT OR REPLACE INTO captcha_sessions VALUES(?,?,?,?,?,?,0)",

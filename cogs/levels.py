@@ -21,19 +21,19 @@ class Levels(commands.Cog):
         level = level_for_xp(xp)
         floor = xp_for_level(level)
         progress = (f"XP уровня: {xp-floor} / {xp_for_level(level+1)-floor}\n"
-                    f"До следующего уровня: {xp_for_level(level+1)-xp} XP" if level < 1000 else "Максимальный уровень.")
+                    f"До следующего уровня: {xp_for_level(level+1)-xp} XP" if level < 1000 else "Уровень 1000 — местная легенда! Выше пока только потолок.")
         await reply(interaction, f"{discord.utils.escape_markdown(user.display_name)}\nУровень: **{level}**\n"
                     f"Всего XP: {xp}\n{progress}")
 
-    @app_commands.command(description="Топ-10 участников по опыту")
+    @app_commands.command(description="Доска почёта ТОРТИК: топ-10 по опыту")
     async def leaderboard(self, interaction: discord.Interaction):
         rows = await self.bot.db.leaderboard(interaction.guild_id)
         lines = []
         for index, row in enumerate(rows, 1):
             member = interaction.guild.get_member(row["user_id"])
             name = member.display_name if member else str(row["user_id"])
-            lines.append(f"{index}. {discord.utils.escape_markdown(name)} — Level {level_for_xp(row['xp'])} ({row['xp']} XP)")
-        await reply(interaction, "\n".join(lines) or "Рейтинг пока пуст.")
+            lines.append(f"{index}. {discord.utils.escape_markdown(name)} — уровень {level_for_xp(row['xp'])} ({row['xp']} XP)")
+        await reply(interaction, "\n".join(lines) or "Доска почёта пока пустая. Общайся после проверки — появится первый опыт!")
 
     async def adjust(self, interaction, user, amount, mode):
         await guard(interaction, user, permission="manage_roles")
@@ -45,7 +45,7 @@ class Levels(commands.Cog):
             if state and state["status"] == "verified":
                 await self.bot.roles.apply(user, verified=True)
             await self.bot.audit(interaction.guild_id, user.id, interaction.user.id, "xp_changed", f"{old} -> {new}")
-        await reply(interaction, f"XP: {old} → {new}. Уровень: {level_for_xp(new)}.")
+        await reply(interaction, f"Опыт обновлён: {old} → {new} XP. Теперь уровень {level_for_xp(new)}.")
 
     @xp.command(name="add", description="Добавить опыт участнику")
     @staff_check()
@@ -67,7 +67,7 @@ class Levels(commands.Cog):
     async def level_set(self, interaction: discord.Interaction, user: discord.Member, level: app_commands.Range[int, 0, 1000]):
         await self.adjust(interaction, user, xp_for_level(level), "set")
 
-    @levels.command(name="sync", description="Исправить роли одного участника")
+    @levels.command(name="sync", description="Разложить роли участника по полочкам")
     @staff_check()
     async def sync(self, interaction: discord.Interaction, user: discord.Member):
         await guard(interaction, user, permission="manage_roles")
@@ -76,21 +76,21 @@ class Levels(commands.Cog):
         async with self.bot.member_lock(interaction.guild_id, user.id):
             state = await self.bot.db.state(interaction.guild_id, user.id)
             if not state:
-                return await reply(interaction, "Участник ещё не зарегистрирован в системе проверки.")
+                return await reply(interaction, "Этот участник ещё не заходил на КПП. Начать проверку можно через /verification reset.")
             ok = await self.bot.roles.apply(user, verified=state["status"] == "verified")
             await self.bot.audit(interaction.guild_id, user.id, interaction.user.id, "roles_sync", str(ok))
-        await reply(interaction, "Роли синхронизированы." if ok else "Есть ошибки ролей; см. /modlog.")
+        await reply(interaction, "Роли разложил по полочкам — готово!" if ok else "С некоторыми ролями заминка. Загляни в /modlog, там подсказка.")
 
     @levels.command(name="syncall", description="Запустить последовательное исправление ролей сервера")
     @staff_check()
     async def syncall(self, interaction: discord.Interaction):
         # A bulk operation has no single target; restrict it to server admins/owner.
         if not (interaction.user.guild_permissions.administrator or interaction.user.id == interaction.guild.owner_id):
-            raise app_commands.CheckFailure("Массовая синхронизация доступна владельцу и администраторам.")
+            raise app_commands.CheckFailure("Генеральную уборку ролей запускает владелец или администратор.")
         await guard(interaction, permission="manage_roles")
         guard_assigned_roles(interaction)
         if self.bot.repair_locks[interaction.guild_id].locked():
-            return await reply(interaction, "Синхронизация уже выполняется.")
+            return await reply(interaction, "Роли уже раскладываю. Вторую уборку пока не начинаем.")
         self.bot.spawn(self.bot.repair_guild(interaction.guild, force=True))
         await self.bot.audit(interaction.guild_id, 0, interaction.user.id, "syncall_requested")
-        await reply(interaction, "Синхронизация запущена. Результат появится в журнале модерации.")
+        await reply(interaction, "Пошёл проверять полочки с ролями. Итог принесу в журнал дежурного.")

@@ -2,15 +2,16 @@ import discord
 from discord import app_commands
 
 from services.rules import hierarchy_error, is_staff
+from services.messages import BRAND, FOOTER
 
 
-def embed(description: str, *, color=0x5865F2, title="АГЕНТ СЛУЖБЫ БЕЗОПАСНОСТИ"):
+def embed(description: str, *, color=0xF2B66D, title=BRAND):
     result = discord.Embed(title=title, description=description[:4000], color=color)
-    result.set_footer(text="ТОРТИК PROJECT")
+    result.set_footer(text=FOOTER)
     return result
 
 
-async def reply(interaction, text, *, color=0x5865F2):
+async def reply(interaction, text, *, color=0xF2B66D):
     kwargs = dict(embed=embed(text, color=color), ephemeral=True,
                   allowed_mentions=discord.AllowedMentions.none())
     if interaction.response.is_done():
@@ -22,10 +23,10 @@ async def reply(interaction, text, *, color=0x5865F2):
 def staff_check():
     async def predicate(interaction):
         if not interaction.guild or not isinstance(interaction.user, discord.Member):
-            raise app_commands.CheckFailure("Команда доступна только на сервере.")
+            raise app_commands.CheckFailure("Эта кнопка работает на сервере ТОРТИК. Загляни туда!")
         cfg = interaction.client.cfg(interaction.guild_id)
         if not cfg or not is_staff(interaction.user, cfg):
-            raise app_commands.CheckFailure("Команда доступна только сотрудникам сервера.")
+            raise app_commands.CheckFailure("Это пульт дежурных — нужен доступ сотрудника сервера.")
         return True
     return app_commands.check(predicate)
 
@@ -34,7 +35,7 @@ async def guard(interaction, target=None, *, permission=None, timeout=False):  #
     if permission and not getattr(interaction.guild.me.guild_permissions, permission):
         await interaction.client.audit(interaction.guild_id, target.id if target else 0,
                                        interaction.user.id, "bot_permission_error", permission)
-        raise app_commands.CheckFailure(f"Боту необходимо право {permission}.")
+        raise app_commands.CheckFailure(f"У меня не хватает права {permission}. Позови администратора, он поправит пропуск.")
     if target:
         error = hierarchy_error(interaction.user, target, interaction.guild.me, timeout=timeout)
         if error:
@@ -48,10 +49,10 @@ def guard_assigned_roles(interaction):
     for rid in cfg["join_roles"] + [r for b in cfg["levels"]["brackets"] for r in b["roles"]]:
         role = interaction.guild.get_role(rid)
         if role and role >= interaction.user.top_role:
-            raise app_commands.CheckFailure("Выдаваемые роли должны быть ниже вашей высшей роли.")
+            raise app_commands.CheckFailure("Эти роли выше твоего допуска. Попроси старшего сотрудника помочь.")
 
 
 def reason_text(reason: str):
     if not reason.strip() or len(reason) > 400:
-        raise app_commands.CheckFailure("Причина должна содержать от 1 до 400 символов.")
+        raise app_commands.CheckFailure("Добавь понятную причину: от 1 до 400 символов, без романа на три тома.")
     return reason.strip()

@@ -65,11 +65,11 @@ def is_staff(member, config: dict) -> bool:
 
 def hierarchy_error(actor, target, bot, *, timeout: bool = False) -> str | None:
     if target.id in {target.guild.owner_id, bot.id, actor.id}:
-        return "Нельзя применить действие к владельцу, самому себе или этому боту."
+        return "Тут стоп: к владельцу, себе или этому боту действие применять нельзя."
     if actor.id != target.guild.owner_id and actor.top_role <= target.top_role:
-        return "Участник находится на вашем уровне иерархии или выше."
+        return "У участника роль не ниже твоей. Попроси старшего дежурного помочь."
     if bot.top_role <= target.top_role:
-        return "Роль бота должна быть выше роли участника."
+        return "Мой допуск ниже нужного: роль бота должна быть выше роли участника."
     if timeout and target.guild_permissions.administrator:
-        return "Discord не позволяет назначить timeout администратору."
+        return "Тут правило самого Discord: администратору timeout не назначить."
     return None

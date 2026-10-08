@@ -26,6 +26,7 @@ from services.logging_setup import configure_logging
 from services.moderation_service import ModerationService
 from services.role_sync import RoleSync
 from services.startup import startup_check
+from services.messages import actor_label, participant_label, event_title, event_detail
 
 LOG = logging.getLogger("security")
 
@@ -33,10 +34,10 @@ LOG = logging.getLogger("security")
 class SecurityTree(app_commands.CommandTree):
     async def interaction_check(self, interaction):
         if not self.client.operational:
-            await reply(interaction, "Бот ещё выполняет проверку запуска.")
+            await reply(interaction, "Дежурный ещё открывает КПП. Дай мне немного времени и повтори команду.")
             return False
         if not interaction.guild_id or not self.client.cfg(interaction.guild_id):
-            await reply(interaction, "Команды доступны только на настроенном сервере.")
+            await reply(interaction, "Этот пульт работает только на сервере, для которого настроен дежурный.")
             return False
         return True
 
@@ -45,7 +46,7 @@ class SecurityTree(app_commands.CommandTree):
         if isinstance(cause, app_commands.CheckFailure):
             text = str(cause)
         else:
-            text = "Действие не завершено. Проверьте права бота и журнал модерации."
+            text = "Упс, команда споткнулась. Дежурные, проверьте мои права и /modlog."
         await self.client.audit(interaction.guild_id or 0, interaction.user.id, interaction.user.id,
                                 "command_error", type(cause).__name__)
         await reply(interaction, text, color=0xED4245)
@@ -172,7 +173,10 @@ class SecurityBot(commands.Bot):
             errors, processed = 0, 0
             for row in rows:
                 if guild.id in self.verification.bulk_guilds:
-                    await self.audit(guild.id, 0, 0, "role_repair_paused", "Manual verification requested")
+                    if force:
+                        await self.audit(guild.id, 0, 0, "role_repair_paused", "Manual verification requested")
+                    else:
+                        LOG.info("role_repair_paused guild=%s", guild.id)
                     return
                 uid = row["user_id"]
                 try:
@@ -205,7 +209,11 @@ class SecurityBot(commands.Bot):
                 finally:
                     await asyncio.sleep(cfg["levels"]["sync_delay_seconds"])
             self.last_repair[guild.id] = time.time()
-            await self.audit(guild.id, 0, 0, "role_repair_completed", f"processed={processed}; errors={errors}")
+            if force or errors:
+                await self.audit(guild.id, 0, 0, "role_repair_completed", f"processed={processed}; errors={errors}")
+            else:
+                # Healthy periodic checks belong in host logs, not the Discord moderation channel.
+                LOG.info("role_repair_completed guild=%s processed=%s errors=0", guild.id, processed)
 
     @tasks.loop(seconds=60)
     async def maintenance(self):
@@ -232,11 +240,13 @@ class SecurityBot(commands.Bot):
             if not rows:
                 continue
             try:
-                batch = embed("События модерации. Полные записи доступны через /modlog.")
+                batch = embed("Что нового на КПП. Подробности для дежурных — в /modlog.", title="Журнал дежурного • ТОРТИК")
                 for row in rows:
-                    batch.add_field(name=f"#{row['id']} {row['action']}",
-                                    value=f"Участник: {row['user_id']} · Сотрудник: {row['moderator_id']}\n"
-                                          + discord.utils.escape_markdown(row['detail'])[:350], inline=False)
+                    batch.add_field(name=f"#{row['id']} {event_title(row['action'])}",
+                                    value=f"Кого касается: {participant_label(row['user_id'])} · "
+                                          f"Кто: {actor_label(row['moderator_id'])}\n"
+                                          + discord.utils.escape_markdown(event_detail(row['action'], row['detail']))[:350],
+                                    inline=False)
                 async with asyncio.timeout(30):
                     await channel.send(embed=batch)
                 for row in rows:

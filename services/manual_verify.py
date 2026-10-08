@@ -19,18 +19,18 @@ def resolve_member(members, query):
         found = [m for m in members if name in {m.name.casefold(), m.display_name.casefold(),
                                                (getattr(m, "global_name", None) or "").casefold()}]
     if not found:
-        raise app_commands.CheckFailure("Участник не найден. Укажите точный username, упоминание или ID.")
+        raise app_commands.CheckFailure("Не нашёл такого гостя. Дай точный username, упоминание или ID.")
     if len(found) != 1:
-        raise app_commands.CheckFailure("Это имя совпадает у нескольких участников. Укажите упоминание или ID.")
+        raise app_commands.CheckFailure("Тут несколько тёзок! Дай упоминание или ID, чтобы не перепутать пропуск.")
     return found[0]
 
 
 async def manually_verify(bot, interaction, member):
     """Caller holds member_lock. Recheck authority for every member of a bulk job."""
     if not is_staff(interaction.user, bot.cfg(member.guild.id)):
-        raise app_commands.CheckFailure("У сотрудника больше нет доступа к команде.")
+        raise app_commands.CheckFailure("Допуск сотрудника изменился — эту команду сейчас выполнить нельзя.")
     if member.bot:
-        raise app_commands.CheckFailure("Ботов верифицировать не нужно.")
+        raise app_commands.CheckFailure("Это мой железный коллега. Ботам такой пропуск не нужен.")
     await guard(interaction, member, permission="manage_roles")
     guard_assigned_roles(interaction)
     gid, uid = member.guild.id, member.id

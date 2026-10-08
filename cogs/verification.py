@@ -10,9 +10,10 @@ from discord.ext import commands
 from cogs.common import embed, guard, reply, staff_check
 from services.manual_verify import manually_verify, resolve_member
 from services.rules import is_staff
+from services.messages import captcha_intro
 
 
-class CaptchaModal(discord.ui.Modal, title="ПОДТВЕРДИТЕ, ЧТО ВЫ НЕ БОТ"):
+class CaptchaModal(discord.ui.Modal, title="Биометрия по-тортиковски"):
     def __init__(self, service, guild_id, user_id, session):
         super().__init__(timeout=600)
         self.service, self.guild_id, self.user_id = service, guild_id, user_id
@@ -22,42 +23,42 @@ class CaptchaModal(discord.ui.Modal, title="ПОДТВЕРДИТЕ, ЧТО ВЫ 
 
     async def on_submit(self, interaction):
         if interaction.user.id != self.user_id:
-            return await reply(interaction, "Эта проверка принадлежит другому участнику.")
+            return await reply(interaction, "Опа, это чужой пропуск! Нажми кнопку в своей проверке.")
         await interaction.response.defer(ephemeral=True)
         await self.service.submit(interaction, self.guild_id, self.nonce, self.answer_field.value)
 
     async def on_error(self, interaction, error):
         await self.service.bot.audit(self.guild_id, self.user_id, 0, "captcha_error", type(error).__name__)
-        await reply(interaction, "Не удалось завершить проверку. Повторите позже; сотрудник увидит ошибку.")
+        await reply(interaction, "Сканер зажевал бумажку. Попробуй чуть позже — дежурным уже оставил запись об ошибке.")
 
 
 class VerificationView(discord.ui.View):
     def __init__(self, service, guild_id):
         super().__init__(timeout=None)
         self.service, self.guild_id = service, guild_id
-        button = discord.ui.Button(label="Ответить / начать проверку", style=discord.ButtonStyle.primary,
+        button = discord.ui.Button(label="Пройти биометрию", style=discord.ButtonStyle.success,
                                    custom_id=f"security:verify:v1:{guild_id}")
         button.callback = self.open_modal
         self.add_item(button)
 
     async def open_modal(self, interaction):
         if not self.service.bot.operational:
-            return await reply(interaction, "Бот ещё выполняет проверку запуска.")
+            return await reply(interaction, "Дежурный ещё открывает КПП. Дай мне немного времени и повтори команду.")
         if interaction.guild_id and interaction.guild_id != self.guild_id:
-            return await reply(interaction, "Эта кнопка относится к другому серверу.")
+            return await reply(interaction, "Кажется, это пропуск на другой сервер. Открой его проверку.")
         guild = self.service.bot.get_guild(self.guild_id)
         if guild is None:
-            return await reply(interaction, "Сервер временно недоступен.")
+            return await reply(interaction, "До сервера пока не достучался. Попробуй чуть позже.")
         # Cache avoids network before the modal's three-second response deadline.
         member = guild.get_member(interaction.user.id)
         if member is None:
-            return await reply(interaction, "Вы должны быть участником этого сервера. Повторите после загрузки списка.")
+            return await reply(interaction, "Пока не вижу тебя в списке гостей. Убедись, что зашёл на сервер, и попробуй чуть позже.")
         async with self.service.bot.member_lock(self.guild_id, member.id):
             state = await self.service.bot.db.state(self.guild_id, member.id)
             if not state:
-                return await reply(interaction, "Попросите сотрудника начать проверку через /verification reset.")
+                return await reply(interaction, "Твоего пропуска пока нет в журнале. Попроси дежурного начать проверку через /verification reset.")
             if state["status"] in {"verified", "passed"}:
-                return await reply(interaction, "Captcha уже пройдена. Незавершённая выдача доступа будет повторена.")
+                return await reply(interaction, "Пример уже решён! Если роли ещё не доехали, я повторю выдачу — второй экзамен не нужен.")
             cfg = self.service.bot.cfg(self.guild_id)["verification"]
             try:
                 session = await self.service.bot.db.challenge(self.guild_id, member.id,
@@ -69,11 +70,11 @@ class VerificationView(discord.ui.View):
     async def on_error(self, interaction, error, item):
         await self.service.bot.audit(self.guild_id, interaction.user.id, 0, "verification_view_error",
                                      type(error).__name__)
-        await reply(interaction, "Проверка временно недоступна. Повторите позже.")
+        await reply(interaction, "Сканер на коротком перерыве. Нажми ещё раз чуть позже.")
 
 
 class Verification(commands.Cog):
-    verification = app_commands.Group(name="verification", description="Проверка участников", guild_only=True)
+    verification = app_commands.Group(name="verification", description="КПП: пропуска и антибот-проверка", guild_only=True)
 
     def __init__(self, bot):
         self.bot = bot
@@ -90,7 +91,7 @@ class Verification(commands.Cog):
     def progress_text(self, gid):
         state = self.bulk_progress.get(gid)
         if not state:
-            return "Массовая проверка в этом запуске бота ещё не выполнялась."
+            return "Сегодня в этом запуске ещё не раздавали пропуска всем разом."
         processed = state["done"] + state["partial"] + state["skipped"] + state["failed"]
         return (f"Состояние: {state['phase']}\nОбработано: {processed}/{state['total']}\n"
                 f"Роли выданы: {state['done']}; нужна сверка: {state['partial']}\n"
@@ -117,15 +118,15 @@ class Verification(commands.Cog):
         gid = interaction.guild_id
         task = self.bulk_tasks.get(gid)
         if task is None or task.done():
-            return await reply(interaction, "Активной массовой верификации нет.")
+            return await reply(interaction, "Общей раздачи сейчас нет — останавливать нечего.")
         if (interaction.user.id != self.bulk_progress[gid]["actor"]
                 and interaction.user.id != interaction.guild.owner_id
                 and not interaction.user.guild_permissions.administrator):
-            raise app_commands.CheckFailure("Остановить задачу может её инициатор или администратор.")
+            raise app_commands.CheckFailure("Стоп-кран доступен тому, кто начал раздачу, или администратору.")
         task.cancel()
         self.bulk_progress[gid]["phase"] = "остановка"
-        await reply(interaction, "Остановка запрошена. Уже сохранённые verified и роли остаются. "
-                    "Незавершённые роли проверит обычная сверка.")
+        await reply(interaction, "Тормозим раздачу! Готовые пропуска и роли остаются на месте. "
+                    "Если какой-то роли не хватило, фоновая сверка её проверит.")
 
     @app_commands.command(name="verify", description="Верифицировать вручную: имя, username, @участник, ID или all")
     @app_commands.describe(target="Точное имя, username, упоминание, ID участника или all для всех")
@@ -135,13 +136,13 @@ class Verification(commands.Cog):
         if target.strip().casefold() == "all":
             gid = interaction.guild_id
             if gid in self.bulk_guilds:
-                return await reply(interaction, "Массовая верификация уже выполняется.")
+                return await reply(interaction, "Уже раздаю пропуска! Загляни в /verification status, вторую очередь не открываем.")
             self.bulk_guilds.add(gid)
             self.bulk_progress[gid] = self.new_progress(interaction.user.id)
             try:
                 # Return a visible response before starting any gateway/API or database work.
-                await reply(interaction, "Массовая верификация запущена. Прогресс: `/verification status`. "
-                            "Остановка: `/verification stop`. Выдача ролей идёт последовательно и может занять несколько минут.")
+                await reply(interaction, "Открываю общую раздачу пропусков! Прогресс: `/verification status`. "
+                            "Стоп-кран: `/verification stop`. Роли выдаю по очереди — Discord не любит суету, это займёт время.")
                 await self.bot.audit(gid, 0, interaction.user.id, "verify_all_started")
                 task = self.bot.spawn(self.verify_all(interaction.guild, interaction.user.id))
                 self.bulk_tasks[gid] = task
@@ -160,8 +161,8 @@ class Verification(commands.Cog):
                                   user=actor, client=self.bot)
         async with self.bot.member_lock(interaction.guild_id, member.id):
             ok = await manually_verify(self.bot, context, member)
-        await reply(interaction, f"Участник {member.id} верифицирован вручную. "
-                    + ("Стартовые роли и роли уровня выданы." if ok else "Часть ролей требует исправления; см. /modlog."))
+        await reply(interaction, f"Пропуск участнику {member.id} оформлен вручную! "
+                    + ("Стартовые роли и роли уровня уже на месте." if ok else "Часть ролей застряла по дороге. Подробности для дежурных — /modlog."))
 
     async def verify_all(self, guild, actor_id):
         state = self.bulk_progress.setdefault(guild.id, self.new_progress(actor_id))
@@ -248,33 +249,32 @@ class Verification(commands.Cog):
         state = await self.bot.db.state(gid, uid)
         now = time.time()
         if not state or state["status"] != "pending":
-            return "Captcha не требуется."
+            return "Уже свой человек — новый пример не нужен."
         if not force and now - state["last_sent"] < cfg["verification"]["resend_cooldown_seconds"]:
-            return "Повторная отправка доступна через минуту."
+            return "Уже стучался в личку! Дай минутку перед повторной отправкой."
         await self.bot.db.execute("UPDATE verification SET last_sent=? WHERE guild_id=? AND user_id=?", (now, gid, uid))
         session = await self.bot.db.challenge(gid, uid, cfg["verification"]["captcha_ttl_seconds"],
                                                cfg["verification"]["max_attempts"])
-        message = embed("**ПОДТВЕРДИТЕ, ЧТО ВЫ НЕ БОТ**\nПеред доступом к серверу пройдите проверку.\n\n"
-                        f"Решите пример: **{session['question']}**\nНажмите «Ответить». "
-                        f"Срок проверки: {cfg['verification']['captcha_ttl_seconds']} секунд.",
-                        color=0xF0B232)
+        message = embed(captcha_intro(session['question'], cfg['verification']['captcha_ttl_seconds']),
+                        color=0xF2B66D, title="О, человек на КПП!")
         try:
             await member.send(embed=message, view=VerificationView(self, gid))
-            return "Captcha отправлена в личные сообщения."
+            return "Постучался в личку с примером — пусть проверит ЛС!"
         except discord.HTTPException:
             channel = member.guild.get_channel(cfg["verification_channel_id"])
             if channel:
                 try:
                     await channel.send(content=f"<@{uid}>", embed=embed(
-                        "Не удалось отправить личное сообщение. Разрешите личные сообщения от участников сервера "
-                        "и попросите сотрудника выполнить `/verification resend`. Пока действует timeout, "
-                        "взаимодействие в сервере ограничено. После истечения timeout можно использовать кнопку ниже.",
+                        "Тук-тук, а личка закрыта! Я дежурный антибот-системы ТОРТИК. "
+                        "Открой ЛС от участников сервера и попроси сотрудника отправить пример через "
+                        "`/verification resend`. Пока действует timeout, проходить проверку нужно в ЛС. "
+                        "Кнопка ниже пригодится, когда Discord разрешает взаимодействие в сервере.",
                         color=0xF0B232), view=VerificationView(self, gid),
                         allowed_mentions=discord.AllowedMentions(users=[member]))
                 except discord.HTTPException as exc:
                     await self.bot.audit(gid, uid, 0, "verification_delivery_error", type(exc).__name__)
             await self.bot.audit(gid, uid, 0, "verification_dm_closed", "Fallback instructions requested")
-            return "DM закрыты. Инструкция отправлена в канал проверки, если он доступен."
+            return "В личку не пустили. Попробовал оставить подсказку в канале КПП; ошибки доставки будут в журнале."
 
     async def complete(self, member):
         gid, uid = member.guild.id, member.id
@@ -298,23 +298,25 @@ class Verification(commands.Cog):
         guild = self.bot.get_guild(guild_id)
         member = await guild.fetch_member(interaction.user.id) if guild else None
         if member is None:
-            return await reply(interaction, "Вы больше не участвуете в сервере.")
+            return await reply(interaction, "Не вижу тебя на сервере. Сначала загляни к нам, потом оформим пропуск.")
         async with self.bot.member_lock(guild_id, member.id):
             cfg = self.bot.cfg(guild_id)["verification"]
             state = await self.bot.db.state(guild_id, member.id)
             if state and state["status"] == "verified":
-                return await reply(interaction, "Вы уже прошли проверку.")
+                return await reply(interaction, "Ты уже свой, пропуск на руках! Повторно сдавать математику не надо.")
             result, remaining = await self.bot.db.answer(guild_id, member.id, nonce, answer,
                                                          cfg["captcha_ttl_seconds"], cfg["max_attempts"])
             if result != "passed":
-                message = (f"❌ НЕВЕРНЫЙ ОТВЕТ\nПопробуйте ещё раз. Осталось попыток: {remaining}."
-                           if result == "incorrect" else "Проверка истекла или попытки закончились. "
-                           "После истечения окна проверки нажмите кнопку снова.")
+                message = (f"Упс, цифры не сошлись 😅\nНичего страшного, попробуй ещё! Осталось попыток: {remaining}. "
+                           "Если они закончились, дождись окончания срока примера и нажми кнопку снова."
+                           if result == "incorrect" else "Этот пример уже ушёл на обед или попытки закончились. "
+                           "Когда срок примера закончится, нажми кнопку — принесу новый. За ошибки не наказываем.")
                 return await reply(interaction, message, color=0xED4245)
             ok = await self.complete(member)
-            await reply(interaction, "✅ ПРОВЕРКА ПРОЙДЕНА\nВы успешно подтвердили, что не являетесь ботом.\n"
-                        "Ограничение проверки снято. Отдельные наказания модерации сохраняются.\n"
-                        + ("Доступ к серверу открыт." if ok else "Часть ролей требует исправления сотрудником."),
+            await reply(interaction, "✅ Биометрия сошлась, свой человек!\n"
+                        "Ограничение антибот-проверки снято. Если был отдельный timeout от модератора, он остаётся.\n"
+                        + ("Роли выданы — залетай в ТОРТИК, располагайся!" if ok else
+                           "Пропуск готов, но часть ролей не выдалась. Дежурные увидят ошибку в журнале."),
                         color=0x57F287)
 
     @commands.Cog.listener()
@@ -344,7 +346,7 @@ class Verification(commands.Cog):
             await self.bot.audit(interaction.guild_id, user.id, interaction.user.id, "captcha_reset")
         await reply(interaction, result)
 
-    @verification.command(name="resend", description="Повторно отправить ожидающему участнику DM captcha")
+    @verification.command(name="resend", description="Ещё раз постучаться в ЛС с примером")
     @staff_check()
     async def resend(self, interaction: discord.Interaction, user: discord.Member):
         await guard(interaction, user)
@@ -353,14 +355,18 @@ class Verification(commands.Cog):
             result = await self.deliver(user)
         await reply(interaction, result)
 
-    @verification.command(name="panel", description="Опубликовать постоянную панель в канале проверки")
+    @verification.command(name="panel", description="Повесить табличку КПП с кнопкой проверки")
     @staff_check()
     async def panel(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         channel = interaction.guild.get_channel(self.bot.cfg(interaction.guild_id)["verification_channel_id"])
         if channel is None:
-            return await reply(interaction, "Канал проверки не найден.")
-        await channel.send(embed=embed("Проверка участников ТОРТИК PROJECT. При активном timeout используйте "
-                                      "captcha в DM. Если DM закрыты, включите их и обратитесь к сотруднику."),
+            return await reply(interaction, "Не нашёл наш КПП. Попроси администратора проверить канал в настройках.")
+        await channel.send(embed=embed("**Добро пожаловать на КПП ТОРТИК!**\n"
+                                      "Здесь отсеиваем ботов и спам-налёты, а людям выдаём пропуска. "
+                                      "Наша «биометрия» — обычный пример, никаких фото и отпечатков.\n\n"
+                                      "С активным timeout загляни в ЛС: там кнопка проверки. "
+                                      "ЛС закрыты? Открой их и попроси сотрудника выполнить `/verification resend`. "
+                                      "Если Discord уже разрешает нажимать кнопки в сервере — начинай ниже."),
                            view=VerificationView(self, interaction.guild_id))
-        await reply(interaction, "Панель опубликована.")
+        await reply(interaction, "Табличка КПП повешена, кнопка на месте!")
