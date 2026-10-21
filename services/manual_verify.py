@@ -1,11 +1,10 @@
 import re
-import time
-from datetime import datetime, timezone
 
 from discord import app_commands
 
 from cogs.common import guard, guard_assigned_roles
 from services.rules import is_staff
+from services.verification_access import release_legacy_timeout
 
 
 def resolve_member(members, query):
@@ -35,14 +34,7 @@ async def manually_verify(bot, interaction, member):
     guard_assigned_roles(interaction)
     gid, uid = member.guild.id, member.id
     state = await bot.db.state(gid, uid)
-    current = member.timed_out_until.timestamp() if member.timed_out_until else 0
-    # Only a timeout matching our recorded verification restriction belongs to this workflow.
-    if (state and state["status"] != "verified" and current > time.time()
-            and abs(current - state["timeout_until"]) <= 2):
-        await guard(interaction, member, permission="moderate_members", timeout=True)
-        until = state["moderation_until"]
-        await member.timeout(datetime.fromtimestamp(until, timezone.utc) if until > time.time() else None,
-                             reason=f"SecurityAgent: manual verification by {interaction.user.id}")
+    await release_legacy_timeout(bot, member, state)
     await bot.db.ensure_user(gid, uid)
     await bot.db.mark_verified(gid, uid)
     await bot.audit(gid, uid, interaction.user.id, "manual_verified", "Staff approved without captcha")

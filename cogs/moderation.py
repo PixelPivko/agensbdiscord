@@ -82,7 +82,7 @@ class Moderation(commands.Cog):
         async with self.bot.member_lock(interaction.guild_id, user.id):
             await self.bot.moderation.timeout(user, 0, reason)
             await self.bot.audit(interaction.guild_id, user.id, interaction.user.id, "untimeout", reason)
-        await reply(interaction, "Паузу от модерации снял. Если антибот-проверка ещё не пройдена, её ограничение остаётся.")
+        await reply(interaction, "Паузу от модерации снял. Если антибот-проверка ещё не пройдена, роль ожидания остаётся.")
 
     @app_commands.command(description="Исключить участника")
     @staff_check()

@@ -15,6 +15,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
+from cogs.trap import Trap
 from cogs.automod import Automod
 from cogs.common import embed, reply
 from cogs.levels import Levels
@@ -108,6 +109,7 @@ class SecurityBot(commands.Bot):
         await self.add_cog(Moderation(self))
         await self.add_cog(Levels(self))
         await self.add_cog(Automod(self))
+        await self.add_cog(Trap(self))
         for command in self.tree.get_commands():
             command.guild_only = True
         self.verification.register_views()
@@ -146,6 +148,7 @@ class SecurityBot(commands.Bot):
         self.maintenance.start()
         self.deliver_logs.start()
         self.operational = True
+        self.spawn(self.get_cog("Trap").run())
         LOG.info("SecurityAgent ready")
 
     async def repair_guild(self, guild, *, force=False):
@@ -163,7 +166,9 @@ class SecurityBot(commands.Bot):
             checkpoint = await self.db.rows("SELECT scanned_at FROM guild_state WHERE guild_id=?", (guild.id,))
             since = checkpoint[0]["scanned_at"] if checkpoint else self.started_at
             for member in guild.members:
-                if not member.bot and member.joined_at and member.joined_at.timestamp() >= since:
+                has_pending_role = any(r.id == cfg["verification"]["pending_role_id"] for r in member.roles)
+                recent_join = member.joined_at and member.joined_at.timestamp() >= since
+                if not member.bot and (recent_join or has_pending_role):
                     state = await self.db.state(guild.id, member.id)
                     if not state:
                         await self.verification.on_member_join(member)
@@ -192,12 +197,7 @@ class SecurityBot(commands.Bot):
                                 if not await self.roles.apply(member, verified=True):
                                     errors += 1
                             else:
-                                # Renew near expiry, and repair roles even while timeout is still active.
-                                current = member.timed_out_until.timestamp() if member.timed_out_until else 0
-                                if current < time.time()+86400:
-                                    await self.verification.restrict(member)
-                                else:
-                                    await self.roles.apply(member, verified=False)
+                                await self.verification.restrict(member)
                                 if not state["last_sent"]:
                                     await self.verification.deliver(member)
                             processed += 1

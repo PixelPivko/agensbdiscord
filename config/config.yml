@@ -1,11 +1,14 @@
 database: data/security_agent.db
 logging_level: INFO
-# Set the actual server ID. A zero placeholder prevents production startup.
+# TORTIK PROJECT settings supplied by the user. Token belongs in .env, never here.
 guilds:
-  0:
+  1546592219169824939:
+    trap:
+      enabled: true
+      channel_id: 1562603037506142228
     staff_role_id: 1546592219379666996
-    verification_channel_id: 0
-    modlog_channel_id: 0
+    verification_channel_id: 1556072335000469545
+    modlog_channel_id: 1556072085363626115
     join_roles:
       - 1546592219220152341
       - 1546592219220152345
@@ -15,7 +18,7 @@ guilds:
       - 1546592219325145181
       - 1546592219325145180
     verification:
-      timeout_days: 7
+      pending_role_id: 1557842948903805040
       captcha_ttl_seconds: 600
       max_attempts: 5
       resend_cooldown_seconds: 60

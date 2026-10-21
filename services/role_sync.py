@@ -24,9 +24,10 @@ class RoleSync:
         brackets = cfg["levels"]["brackets"]
         level_roles = {r for b in brackets for r in b["roles"]}
         owned = {r.id for r in member.roles}
+        pending = cfg["verification"]["pending_role_id"]
         desired = (set(cfg["join_roles"]) | role_ids_for_level(
-            await self.bot.db.level(member.guild.id, member.id), brackets)) if verified else set()
-        managed = set(cfg["join_roles"]) | level_roles
+            await self.bot.db.level(member.guild.id, member.id), brackets)) if verified else {pending}
+        managed = set(cfg["join_roles"]) | level_roles | {pending}
         # Remove obsolete roles before adding the new pair; never edit unrelated roles.
         success = True
         for adding, ids in ((False, (owned & managed) - desired), (True, desired - owned)):

@@ -15,7 +15,8 @@ async def startup_check(bot, guild):
               "missing_permissions": missing, "roles": {}, "channels": {}}
     errors = len(missing) + int(staff is None)
     for group, ids in (("join", cfg["join_roles"]),
-                       ("level", [r for b in cfg["levels"]["brackets"] for r in b["roles"]])):
+                       ("level", [r for b in cfg["levels"]["brackets"] for r in b["roles"]]),
+                       ("pending", [cfg["verification"]["pending_role_id"]])):
         ok = 0
         for rid in ids:
             role = guild.get_role(rid)
@@ -32,6 +33,18 @@ async def startup_check(bot, guild):
             valid = p.view_channel and p.send_messages and p.embed_links and p.read_message_history
         report["channels"][name] = "OK" if valid else "MISSING/NO PERMISSION"
         errors += int(not valid)
+    pending = guild.get_role(cfg["verification"]["pending_role_id"])
+    if pending:
+        extra_channels = [ch.id for ch in guild.channels
+                          if not isinstance(ch, discord.CategoryChannel)
+                          and ch.id != cfg["verification_channel_id"]
+                          and ch.permissions_for(pending).view_channel]
+        checkpoint = guild.get_channel(cfg["verification_channel_id"])
+        can_verify = bool(checkpoint and checkpoint.permissions_for(pending).view_channel
+                          and checkpoint.permissions_for(pending).read_message_history)
+        report["pending_access"] = {"checkpoint": "OK" if can_verify else "NO ACCESS",
+                                    "unexpected_visible_channels": extra_channels}
+        errors += int(not can_verify) + int(bool(extra_channels))
     logging.getLogger("security.startup").log(logging.WARNING if errors else logging.INFO,
                                               "Startup check %s", report)
     return report, errors

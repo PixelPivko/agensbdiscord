@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from pathlib import Path
 
 import discord
@@ -8,9 +9,31 @@ from discord.ext import commands
 from services.rules import AntiProfanitySystem, is_staff, level_for_xp, normalize
 
 
+class MessageReader:
+    """Shared request pacing for XP settlement and uncached message edits."""
+
+    def __init__(self):
+        self.lock = asyncio.Lock()
+        self.next_read = 0.0
+        self.interval = 1.0
+
+    async def read(self, channel, message_id):
+        try:
+            async with asyncio.timeout(30):
+                async with self.lock:
+                    await asyncio.sleep(max(0, self.next_read - time.monotonic()))
+                    try:
+                        return await channel.fetch_message(message_id)
+                    finally:
+                        self.next_read = time.monotonic() + self.interval
+        except (discord.HTTPException, TimeoutError):
+            return None
+
+
 class ActivityLevelSystem:
-    def __init__(self, bot):
+    def __init__(self, bot, reader=None):
         self.bot = bot
+        self.reader = reader or MessageReader()
 
     async def process(self, message):
         cfg = self.bot.cfg(message.guild.id)["xp"]
@@ -21,11 +44,8 @@ class ActivityLevelSystem:
             return
         # Settle before fetching: deleted/native-AutoMod-blocked messages never earn initial XP.
         await asyncio.sleep(cfg["settlement_seconds"])
-        try:
-            current = await message.channel.fetch_message(message.id)
-        except discord.HTTPException:
-            return
-        if current.content != message.content:
+        current = await self.reader.read(message.channel, message.id)
+        if current is None or current.content != message.content:
             return
         async with self.bot.member_lock(message.guild.id, message.author.id):
             old, new, amount = await self.bot.db.award_xp(message.guild.id, message.author.id, message.id, text, cfg)
@@ -36,7 +56,9 @@ class ActivityLevelSystem:
 class Automod(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.activity = ActivityLevelSystem(bot)
+        self.reader = MessageReader()
+        self.activity = ActivityLevelSystem(bot, self.reader)
+        self.pending_edits = set()
         self.filters = {}
         for gid, cfg in bot.config["guilds"].items():
             p = cfg["profanity"]
@@ -80,6 +102,9 @@ class Automod(commands.Cog):
     async def on_message(self, message):
         if not self.bot.operational or not message.guild or not self.bot.cfg(message.guild.id) or message.author.bot or not isinstance(message.author, discord.Member):
             return
+        trap = self.bot.cfg(message.guild.id).get("trap", {})
+        if trap.get("enabled") and (message.channel.id == trap["channel_id"] or getattr(message.channel, "parent_id", None) == trap["channel_id"]):
+            return
         if await self.moderate(message):
             return
         await self.activity.process(message)
@@ -88,15 +113,32 @@ class Automod(commands.Cog):
     async def on_raw_message_edit(self, payload):
         if not self.bot.operational or not payload.guild_id or not self.bot.cfg(payload.guild_id):
             return
+        content = payload.data.get("content")
+        if not isinstance(content, str):
+            return
+        # Gateway updates for bot messages/embeds must not trigger GETs of our own modlog.
+        author = payload.data.get("author") or {}
+        cached = getattr(payload, "cached_message", None)
+        if author.get("bot") or payload.data.get("webhook_id") or (cached and cached.author.bot):
+            return
+        cfg = self.bot.cfg(payload.guild_id)["profanity"]
+        if payload.channel_id in cfg["ignored_channels"]:
+            return
+        # Text is already supplied by Discord. Clean text needs no API read at all.
+        if not self.filters[payload.guild_id].matches(content):
+            return
         channel = self.bot.get_channel(payload.channel_id)
-        if not channel or "content" not in payload.data:
+        key = (payload.guild_id, payload.message_id)
+        if channel is None or key in self.pending_edits:
             return
+        self.pending_edits.add(key)
         try:
-            message = await channel.fetch_message(payload.message_id)
-        except discord.HTTPException:
-            return
-        if not message.author.bot and isinstance(message.author, discord.Member):
-            await self.moderate(message)
+            message = await self.reader.read(channel, payload.message_id)
+            if message is not None and not message.author.bot and isinstance(message.author, discord.Member):
+                # Recheck the fetched, latest text; the edit may have already been corrected.
+                await self.moderate(message)
+        finally:
+            self.pending_edits.discard(key)
 
     async def revoke(self, guild_id, message_id):
         uid = await self.bot.db.revoke_xp(guild_id, message_id)

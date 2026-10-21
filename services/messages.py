@@ -11,8 +11,8 @@ def captcha_intro(question, ttl):
             f"{question}\n\n"
             "Шучу, никакой настоящей биометрии — только простой пример. "
             "Это наша защита от ботов и спам-налётов, чтобы в ТОРТИК было уютно.\n\n"
-            "Жми кнопку ниже и вводи ответ. Как решишь — сниму ограничение проверки и выдам роли. "
-            "Семь дней ждать не надо!\n"
+            "Жми кнопку ниже и вводи ответ. Как решишь — сниму роль ожидания и выдам роли участника. "
+            "Пока тебе открыт только канал КПП; там тоже можно решить пример.\n"
             f"На этот пример есть {ttl} сек. Если истечёт — кнопка выдаст новый.")
 
 
@@ -20,6 +20,8 @@ EVENT_TITLES = {
     "captcha_passed": "Биометрия сошлась — пропуск готов!",
     "captcha_reset": "Пропуск сбросили, ждём новую проверку",
     "verification_timeout": "Новичок на КПП — ждём ответ на пример",
+    "verification_pending_role": "Выдали роль ожидания — добро пожаловать на КПП",
+    "verification_timeout_migrated": "Старый timeout проверки снят",
     "verification_dm_closed": "В личку не достучался",
     "verification_delivery_error": "Сообщение застряло по дороге",
     "captcha_error": "Сканер примеров споткнулся",
@@ -64,10 +66,14 @@ def event_title(action):
 
 
 def event_detail(action, detail):
+    if action == "verification_pending_role":
+        return "До captcha действует роль ожидания. После проверки снимем её и выдадим обычные роли."
+    if action == "verification_timeout_migrated":
+        return "Перешли с timeout на роль ожидания. Отдельные наказания модерации сохранены."
     if action == "verification_timeout":
         return "Ограничение проверки — до 7 дней. После правильного ответа снимается сразу."
     if action == "verification_dm_closed":
-        return "ЛС закрыты. Нужны открытые ЛС и повторная отправка через /verification resend."
+        return "ЛС закрыты. Участник может решить пример кнопкой в канале КПП."
     if action == "manual_verified":
         return "Сотрудник подтвердил участника без captcha."
     if action == "captcha_passed":

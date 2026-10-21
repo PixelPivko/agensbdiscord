@@ -1,16 +1,16 @@
 import asyncio
 import time
 from types import SimpleNamespace
-from datetime import datetime, timezone
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-from cogs.common import embed, guard, reply, staff_check
+from cogs.common import embed, guard, guard_assigned_roles, reply, staff_check
 from services.manual_verify import manually_verify, resolve_member
 from services.rules import is_staff
 from services.messages import captcha_intro
+from services.verification_access import release_legacy_timeout
 
 
 class CaptchaModal(discord.ui.Modal, title="Биометрия по-тортиковски"):
@@ -226,22 +226,14 @@ class Verification(commands.Cog):
         gid, uid = member.guild.id, member.id
         await self.bot.db.ensure_user(gid, uid)
         state = await self.bot.db.state(gid, uid)
-        # Preserve moderation timeout already present before the verification timeout is applied.
-        current = member.timed_out_until.timestamp() if member.timed_out_until else 0
-        known = state["timeout_until"]
-        if current > time.time() and abs(current-known) > 2:
-            await self.bot.db.execute("UPDATE verification SET moderation_until=MAX(moderation_until,?) "
-                                      "WHERE guild_id=? AND user_id=?", (current, gid, uid))
-        until = time.time() + 7 * 86400
-        await self.bot.db.execute("UPDATE verification SET timeout_until=? WHERE guild_id=? AND user_id=?",
-                                  (until, gid, uid))
-        try:
-            await member.timeout(datetime.fromtimestamp(max(until, current), timezone.utc),
-                                 reason="SecurityAgent: pending captcha")
-            await self.bot.audit(gid, uid, 0, "verification_timeout", "7 days; removed after captcha")
-        except discord.HTTPException as exc:
-            await self.bot.audit(gid, uid, 0, "bot_permission_error", f"Verification timeout: {type(exc).__name__}")
-        await self.bot.roles.apply(member, verified=False)
+        had_role = any(r.id == self.bot.cfg(gid)["verification"]["pending_role_id"] for r in member.roles)
+        ok = await self.bot.roles.apply(member, verified=False)
+        if ok:
+            # Install role restrictions before lifting any legacy verification timeout.
+            await release_legacy_timeout(self.bot, member, state)
+            if not had_role:
+                await self.bot.audit(gid, uid, 0, "verification_pending_role")
+        return ok
 
     async def deliver(self, member, *, force=False):
         gid, uid = member.guild.id, member.id
@@ -266,9 +258,9 @@ class Verification(commands.Cog):
                 try:
                     await channel.send(content=f"<@{uid}>", embed=embed(
                         "Тук-тук, а личка закрыта! Я дежурный антибот-системы ТОРТИК. "
-                        "Открой ЛС от участников сервера и попроси сотрудника отправить пример через "
-                        "`/verification resend`. Пока действует timeout, проходить проверку нужно в ЛС. "
-                        "Кнопка ниже пригодится, когда Discord разрешает взаимодействие в сервере.",
+                        "Ничего страшного: жми «Пройти биометрию» прямо здесь и решай пример. "
+                        "После проверки сниму роль ожидания и выдам обычные роли. "
+                        "Если есть отдельный timeout от модератора, сначала обратись к дежурным.",
                         color=0xF0B232), view=VerificationView(self, gid),
                         allowed_mentions=discord.AllowedMentions(users=[member]))
                 except discord.HTTPException as exc:
@@ -281,14 +273,9 @@ class Verification(commands.Cog):
         state = await self.bot.db.state(gid, uid)
         if not state or state["status"] != "passed":
             return False
-        # Fetch fresh Discord state so a concurrent staff-issued timeout is not silently removed.
+        # Fetch fresh state before removing a legacy timeout or the pending role.
         member = await member.guild.fetch_member(uid)
-        current = member.timed_out_until.timestamp() if member.timed_out_until else 0
-        until = state["moderation_until"]
-        if current > time.time() and abs(current - state["timeout_until"]) > 2:
-            until = max(until, current)
-        await member.timeout(datetime.fromtimestamp(until, timezone.utc) if until > time.time() else None,
-                             reason="SecurityAgent: captcha passed; remove verification timeout")
+        await release_legacy_timeout(self.bot, member, state)
         await self.bot.db.mark_verified(gid, uid)
         roles_ok = await self.bot.roles.apply(member, verified=True)
         await self.bot.audit(gid, uid, 0, "captcha_passed", "Roles synchronized" if roles_ok else "Role repair required")
@@ -314,9 +301,9 @@ class Verification(commands.Cog):
                 return await reply(interaction, message, color=0xED4245)
             ok = await self.complete(member)
             await reply(interaction, "✅ Биометрия сошлась, свой человек!\n"
-                        "Ограничение антибот-проверки снято. Если был отдельный timeout от модератора, он остаётся.\n"
-                        + ("Роли выданы — залетай в ТОРТИК, располагайся!" if ok else
-                           "Пропуск готов, но часть ролей не выдалась. Дежурные увидят ошибку в журнале."),
+                        "Если был отдельный timeout от модератора, он остаётся.\n"
+                        + ("Роль ожидания снята, обычные роли выданы — залетай в ТОРТИК!" if ok else
+                           "Пример принят, но с ролями заминка. Дежурные увидят ошибку, а я повторю оформление пропуска."),
                         color=0x57F287)
 
     @commands.Cog.listener()
@@ -337,7 +324,8 @@ class Verification(commands.Cog):
     @verification.command(name="reset", description="Сбросить проверку и отправить captcha")
     @staff_check()
     async def reset(self, interaction: discord.Interaction, user: discord.Member):
-        await guard(interaction, user, permission="moderate_members", timeout=True)
+        await guard(interaction, user, permission="manage_roles")
+        guard_assigned_roles(interaction)
         await interaction.response.defer(ephemeral=True)
         async with self.bot.member_lock(interaction.guild_id, user.id):
             await self.bot.db.reset(interaction.guild_id, user.id)
@@ -365,8 +353,8 @@ class Verification(commands.Cog):
         await channel.send(embed=embed("**Добро пожаловать на КПП ТОРТИК!**\n"
                                       "Здесь отсеиваем ботов и спам-налёты, а людям выдаём пропуска. "
                                       "Наша «биометрия» — обычный пример, никаких фото и отпечатков.\n\n"
-                                      "С активным timeout загляни в ЛС: там кнопка проверки. "
-                                      "ЛС закрыты? Открой их и попроси сотрудника выполнить `/verification resend`. "
-                                      "Если Discord уже разрешает нажимать кнопки в сервере — начинай ниже."),
+                                      "Пока на тебе роль ожидания, тебе открыт этот канал. "
+                                      "Жми кнопку здесь или реши пример в ЛС. После ответа сниму роль ожидания "
+                                      "и выдам роли участника. Если у тебя отдельный timeout модерации, обратись к дежурным."),
                            view=VerificationView(self, interaction.guild_id))
         await reply(interaction, "Табличка КПП повешена, кнопка на месте!")

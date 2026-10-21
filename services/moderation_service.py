@@ -14,11 +14,11 @@ class ModerationService:
         gid, uid = member.guild.id, member.id
         state = await self.bot.db.state(gid, uid)
         until = time.time() + minutes * 60 if minutes else 0
-        # Never shorten an active verification timeout when applying/removing a moderation timeout.
-        effective = max(until, state["timeout_until"] if state and state["status"] == "pending" else 0)
+        # Verification uses a role; timeout here belongs exclusively to moderation.
+        effective = until
         await member.timeout(datetime.fromtimestamp(effective, timezone.utc) if effective else None, reason=reason)
         if state:
-            await self.bot.db.execute("UPDATE verification SET moderation_until=? WHERE guild_id=? AND user_id=?",
+            await self.bot.db.execute("UPDATE verification SET moderation_until=?,timeout_until=0 WHERE guild_id=? AND user_id=?",
                                       (until, gid, uid))
 
     async def warn(self, member, actor, reason, source="manual", event_id=None):

@@ -46,7 +46,8 @@ def guard_assigned_roles(interaction):
     if interaction.user.id == interaction.guild.owner_id:
         return
     cfg = interaction.client.cfg(interaction.guild_id)
-    for rid in cfg["join_roles"] + [r for b in cfg["levels"]["brackets"] for r in b["roles"]]:
+    for rid in (cfg["join_roles"] + [r for b in cfg["levels"]["brackets"] for r in b["roles"]]
+                + [cfg["verification"]["pending_role_id"]]):
         role = interaction.guild.get_role(rid)
         if role and role >= interaction.user.top_role:
             raise app_commands.CheckFailure("Эти роли выше твоего допуска. Попроси старшего сотрудника помочь.")

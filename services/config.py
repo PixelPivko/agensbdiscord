@@ -19,12 +19,19 @@ def load_config(path: str = "config/config.yml", *, offline: bool = False) -> di
         for name in ("staff_role_id", "verification_channel_id", "modlog_channel_id"):
             if type(g.get(name)) is not int or g[name] < 0 or (not offline and g[name] == 0):
                 raise ValueError(f"Configure a positive {name} for guild {guild_id}")
+        trap = g.get("trap", {})
+        if trap and (type(trap.get("enabled")) is not bool or type(trap.get("channel_id")) is not int or trap["channel_id"] <= 0):
+            raise ValueError("Invalid trap configuration")
+        if trap.get("enabled") and trap["channel_id"] in (g["verification_channel_id"], g["modlog_channel_id"]):
+            raise ValueError("Trap must be separate from verification and logs")
         join = g["join_roles"]
         if not join or len(join) != len(set(join)) or any(type(r) is not int or r <= 0 for r in join):
             raise ValueError("join_roles must be unique positive IDs")
         v = g["verification"]
-        if v["timeout_days"] != 7 or not 1 <= v["max_attempts"] <= 10:
-            raise ValueError("Verification requires seven days and 1–10 attempts")
+        if type(v.get("pending_role_id")) is not int or v["pending_role_id"] <= 0:
+            raise ValueError("Configure a positive verification.pending_role_id")
+        if not 1 <= v["max_attempts"] <= 10:
+            raise ValueError("Verification requires 1–10 attempts")
         if not 60 <= v["captcha_ttl_seconds"] <= 3600 or v["resend_cooldown_seconds"] < 10:
             raise ValueError("Invalid captcha time limits")
         if type(v["give_join_roles_before_verification"]) is not bool:
@@ -45,6 +52,8 @@ def load_config(path: str = "config/config.yml", *, offline: bool = False) -> di
             raise ValueError("Invalid or overlapping level roles")
         if g["staff_role_id"] in set(join + all_roles):
             raise ValueError("Staff role cannot be an automatic role")
+        if v["pending_role_id"] in set(join + all_roles + [g["staff_role_id"]]):
+            raise ValueError("Pending role must be distinct from staff, join and level roles")
         if g["levels"]["repair_interval_seconds"] < 60 or g["levels"]["sync_delay_seconds"] < 0.1:
             raise ValueError("Role repair frequency is too high")
         x = g["xp"]
