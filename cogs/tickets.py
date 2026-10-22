@@ -17,22 +17,45 @@ KINDS = {
  'classic': 'Заявка в администрацию Classic',
  'discord': 'Заявка в администрацию Discord',
 }
-RECRUIT = ('**Набор в администрацию — от 13 лет.**\n'
-           'От 200 часов в игре (можно меньше — готовы предоставить всё обучение).\n'
-           'Знание админ-панели желательно.\n\n'
-           '**От нас:** хороший коллектив, быстрый карьерный рост. '
-           'Можете указывать участие в проекте в своём опыте работы; '
-           'это не обещание официального трудоустройства.\n\n'
-           'Почему именно ты? Если трудно сформулировать — «потому что я крутой» тоже начало 🙂')
+ACCENT = 0x9B8AFB
+SERVERS = {'mrp': 'Medium RP', 'classic': 'Classic', 'discord': 'Discord'}
+RECRUIT = ('**От 13 лет** · обучение и поддержка команды.\n'
+           'Для игровых направлений: от 200 часов (готовы рассмотреть меньше), '
+           'знание админ-панели желательно.\n'
+           'Для Discord: грамотность, спокойное общение и интерес к модерации.\n\n'
+           'У нас — дружный коллектив и возможность карьерного роста. '
+           'Участие в проекте можно указать в своём опыте.')
 
-def questions(kind):
-    base = ([] if kind in ('mrp', 'classic', 'discord') else ['Сервер: MRP / CLASSIC / DISCORD']) + ['Ваш никнейм', 'Ваш SteamID (для Discord — ID)']
+
+def panel_embed():
+    e = discord.Embed(title='Тебя услышат. Давай разберёмся 💜',
+        description='Привет! Это место, где решают вопросы и находят новых людей в команду.\n'
+                    '**Выбери тему ниже — остальное подскажем.**', color=ACCENT)
+    e.set_author(name='ТОРТИК PROJECT  /  СЛУЖБА ПОДДЕРЖКИ')
+    e.add_field(name='01  ·  Сообщить о проблеме',
+        value='**На игрока** — нарушение или конфликт.\n**На администратора** — обращение к старшим.',inline=False)
+    e.add_field(name='02  ·  Обжаловать наказание',
+        value='**Апелляция** — попросить пересмотр.\n**В.М.Н** — отдельное рассмотрение ответственной командой.',inline=False)
+    e.add_field(name='03  ·  Стать частью команды',value=RECRUIT,inline=False)
+    e.set_footer(text='Кнопка → анкета → личный тикет • Не публикуй пароли и токены')
+    return e
+
+
+def questions(kind, answers=None):
+    server = kind if kind in SERVERS else (answers[0].lower() if answers else 'mrp')
+    prefix = [] if kind in SERVERS else ['Сервер']
+    identity = [] if server == 'discord' else ['Ваш игровой никнейм', 'Ваш SteamID']
     if kind in ('player', 'admin'):
-        return base + ['Суть жалобы', 'Описание всей ситуации', 'Согласны с наказанием за ложь? Y/N']
+        return prefix + identity + ['На кого жалоба? Ник / ID', 'Суть жалобы',
+            'Что произошло? Когда? Доказательства', 'Согласны с наказанием за ложь? Y/N']
     if kind in ('appeal', 'vmn'):
-        return base + ['Причина бана', 'Описание всей ситуации', 'Почему снять или смягчить наказание?',
-                       'Согласны с X2 наказанием за ложь? Y/N']
-    result = base + ['Ваш возраст', 'Часы в игре и опыт с админ-панелью', 'Почему взять именно вас?']
+        return prefix + identity + ['Причина бана', 'Описание всей ситуации',
+            'Почему снять или смягчить наказание?', 'Согласны с X2 наказанием за ложь? Y/N']
+    if kind == 'discord':
+        return ['Ваш возраст', 'Опыт модерации Discord', 'Сколько времени готовы уделять?',
+                'В чате конфликт. Ваши действия?', 'Почему взять именно вас?']
+    result = identity + ['Ваш возраст', 'Сколько часов в игре?', 'Опыт работы с админ-панелью',
+                         'Сколько времени готовы уделять?', 'Почему взять именно вас?']
     if kind == 'mrp':
         result += ['Что такое ГОК?', 'Что такое ПХ?', 'Год основания ПХ', 'Что такое CAP-5?', 'Что такое CAP-1?']
     return result
@@ -92,14 +115,30 @@ class Panel(SafeView):
     def __init__(self, cog):
         super().__init__(cog)
         for n, (key, title) in enumerate(KINDS.items()):
-            button = discord.ui.Button(label=title, custom_id=f'tickets:open:{key}', row=n//2,
-                                       style=discord.ButtonStyle.primary)
+            labels = ['На игрока', 'На администратора', 'Апелляция', 'Апелляция В.М.Н', 'Набор · Medium RP', 'Набор · Classic', 'Набор · Discord']
+            icons = ['📨', '🛡️', '⚖️', '📋', '🎮', '🎮', '💬']
+            button = discord.ui.Button(label=labels[n], emoji=icons[n], custom_id=f'tickets:open:{key}', row=min(n//2,2),
+                                       style=discord.ButtonStyle.success if n >= 4 else discord.ButtonStyle.secondary)
             async def callback(i, kind=key):
                 if i.channel_id != cog.settings(i.guild_id)['panel_channel_id']:
                     return await reply(i, 'Открой анкету в канале тикетов.')
-                await cog.start(i, kind)
+                if kind in SERVERS:
+                    await cog.start(i, kind)
+                else:
+                    await i.response.send_message('**Где произошла ситуация?**\nВыбери направление — анкету увидят нужные сотрудники.', view=ServerPicker(cog,kind), ephemeral=True)
             button.callback = callback
             self.add_item(button)
+
+class ServerPicker(SafeView):
+    def __init__(self,cog,kind):
+        super().__init__(cog)
+        for server, title in SERVERS.items():
+            button = discord.ui.Button(label=title, custom_id=f'tickets:server:{kind}:{server}', style=discord.ButtonStyle.primary)
+            async def callback(i, selected=server):
+                await cog.start(i,kind,selected)
+            button.callback=callback
+            self.add_item(button)
+
 
 class Continue(SafeView):
     @discord.ui.button(label='Продолжить / отправить анкету', custom_id='tickets:continue', style=discord.ButtonStyle.success)
@@ -108,8 +147,8 @@ class Continue(SafeView):
         if not row or row['status'] != 'draft':
             return await reply(i, 'Нажми нужную кнопку на панели тикетов.')
         answers = json.loads(row['answers'])
-        if len(answers) < len(questions(row['kind'])):
-            await i.response.send_modal(Form(self.cog, row['kind'], len(answers)))
+        if len(answers) < len(questions(row['kind'], json.loads(row['answers']))):
+            await i.response.send_modal(Form(self.cog, row['kind'], len(answers), answers))
         else:
             await self.cog.create(i)
 
@@ -159,22 +198,23 @@ class Controls(SafeView):
             await reply(i, 'Закрыто без удаления переписки.')
 
 class Form(discord.ui.Modal):
-    def __init__(self, cog, kind, offset):
-        super().__init__(title=KINDS[kind][:45], timeout=900)
+    def __init__(self, cog, kind, offset, answers=None):
+        super().__init__(title=f'{KINDS[kind][:32]} · {offset//5+1}', timeout=900)
+        self.answers = answers or []
         self.cog, self.kind, self.offset = cog, kind, offset
-        for q in questions(kind)[offset:offset+5]:
-            self.add_item(discord.ui.TextInput(label=q, style=discord.TextStyle.paragraph, max_length=900))
+        for q in questions(kind, self.answers)[offset:offset+5]:
+            self.add_item(discord.ui.TextInput(label=q, style=discord.TextStyle.paragraph, max_length=900, placeholder='Потому что я крутой — тоже начало 🙂' if q == 'Почему взять именно вас?' else None))
 
     async def on_submit(self, i):
         await i.response.defer(ephemeral=True)
         async with self.cog.bot.member_lock(i.guild_id, i.user.id):
             row = await self.cog.state(i.guild_id, i.user.id)
-            if not row or row['status'] != 'draft' or row['kind'] != self.kind or len(json.loads(row['answers'])) != self.offset:
+            if not row or row['status'] != 'draft' or row['kind'] != self.kind or json.loads(row['answers']) != self.answers or len(json.loads(row['answers'])) != self.offset:
                 return await reply(i, 'Эта форма устарела. Продолжи через панель тикетов.')
             values = [str(x).strip() for x in self.children]
             if any(not x for x in values):
                 return await reply(i, 'Заполни все поля, пожалуйста. Открой форму заново через панель.')
-            qs = questions(self.kind)[self.offset:self.offset+5]
+            qs = questions(self.kind, self.answers)[self.offset:self.offset+5]
             for q, value in zip(qs, values):
                 if q.startswith('Сервер:') and value.lower() not in ('mrp', 'classic', 'discord'):
                     return await reply(i, 'В поле сервера укажи MRP, CLASSIC или DISCORD. Открой форму повторно.')
@@ -185,7 +225,7 @@ class Form(discord.ui.Modal):
             answers = json.loads(row['answers']) + values
             await self.cog.bot.db.execute('UPDATE tickets SET answers=?,updated_at=? WHERE guild_id=? AND user_id=?',
                                          (json.dumps(answers, ensure_ascii=False), time.time(), i.guild_id, i.user.id))
-        if len(answers) == len(questions(self.kind)):
+        if len(answers) == len(questions(self.kind, answers)):
             return await self.cog.create(i)
         await i.followup.send('Анкета сохранена. Нажми ниже, чтобы продолжить или отправить её администрации.',
                               view=Continue(self.cog), ephemeral=True)
@@ -203,7 +243,15 @@ class Tickets(commands.Cog):
 
     async def cog_load(self):
         await self.bot.db.execute(SCHEMA)
+        await self.bot.db.execute('CREATE TABLE IF NOT EXISTS ticket_form_version(version INTEGER PRIMARY KEY)')
+        version = await self.bot.db.rows('SELECT version FROM ticket_form_version WHERE version=2')
+        if not version:
+            # Old question order cannot safely be reused; open tickets are untouched.
+            await self.bot.db.execute("UPDATE tickets SET status='closed' WHERE status='draft' AND channel_id=0")
+            await self.bot.db.execute('INSERT OR IGNORE INTO ticket_form_version VALUES(2)')
         await self.bot.db.execute('CREATE TABLE IF NOT EXISTS ticket_panels(guild_id INTEGER PRIMARY KEY,message_id INTEGER NOT NULL)')
+        for kind in ('player','admin','appeal','vmn'):
+            self.bot.add_view(ServerPicker(self,kind))
         for cls in (Panel, Continue, Controls):
             self.bot.add_view(cls(self))
 
@@ -211,7 +259,7 @@ class Tickets(commands.Cog):
         rows = await self.bot.db.rows('SELECT * FROM tickets WHERE guild_id=? AND user_id=?', (gid, uid))
         return rows[0] if rows else None
 
-    async def start(self, i, kind):
+    async def start(self, i, kind, server=None):
         async with self.bot.member_lock(i.guild_id, i.user.id):
             row = await self.state(i.guild_id, i.user.id)
             if row and row['status'] == 'open':
@@ -219,14 +267,17 @@ class Tickets(commands.Cog):
             if not row or row['status'] == 'closed':
                 await self.bot.db.execute('INSERT OR REPLACE INTO tickets(guild_id,user_id,kind,updated_at) VALUES(?,?,?,?)',
                                           (i.guild_id, i.user.id, kind, time.time()))
-            elif row['kind'] != kind:
+            elif row['kind'] != kind or (server and json.loads(row['answers'])[:1] != [server]):
                 # Switching unfinished form is explicit via category button.
                 await self.bot.db.execute("UPDATE tickets SET kind=?,answers='[]',channel_id=0,updated_at=? WHERE guild_id=? AND user_id=?",
                                           (kind, time.time(), i.guild_id, i.user.id))
         row = await self.state(i.guild_id, i.user.id)
+        if server and not json.loads(row['answers']):
+            await self.bot.db.execute('UPDATE tickets SET answers=? WHERE guild_id=? AND user_id=?', (json.dumps([server]),i.guild_id,i.user.id))
+            row = await self.state(i.guild_id, i.user.id)
         offset = len(json.loads(row['answers']))
-        if offset < len(questions(kind)):
-            await i.response.send_modal(Form(self, kind, offset))
+        if offset < len(questions(kind, json.loads(row['answers']))):
+            await i.response.send_modal(Form(self, kind, offset, json.loads(row['answers'])))
         else:
             await self.create(i)
 
@@ -238,7 +289,7 @@ class Tickets(commands.Cog):
             if not row or row['status'] != 'draft':
                 return await reply(i, 'Тикет уже отправлен или форма устарела.')
             answers = json.loads(row['answers'])
-            if len(answers) != len(questions(row['kind'])):
+            if len(answers) != len(questions(row['kind'], json.loads(row['answers']))):
                 return await reply(i, 'Сначала заполни анкету полностью.')
             cfg = self.settings(i.guild_id)
             category = i.guild.get_channel(cfg['category_id'])
@@ -259,8 +310,10 @@ class Tickets(commands.Cog):
             await self.bot.db.execute('UPDATE tickets SET channel_id=? WHERE guild_id=? AND user_id=?', (channel.id,i.guild_id,i.user.id))
             embeds = []
             for offset in range(0,len(answers),5):
-                e = discord.Embed(title=KINDS[row['kind']], description=f'Автор: {i.user.mention} · Сервер: {server.upper()}', color=0xF2B66D)
-                for q, a in zip(questions(row['kind'])[offset:offset+5], answers[offset:offset+5]):
+                e = discord.Embed(title=KINDS[row['kind']], description=f'**Автор:** {i.user.mention}\n**Discord ID:** `{i.user.id}`\n**Направление:** {SERVERS[server]}', color=ACCENT)
+                e.set_author(name='ТОРТИК PROJECT / ОБРАЩЕНИЕ')
+                e.set_footer(text=f'Страница {offset//5+1} • Ответственные скоро заглянут')
+                for q, a in zip(questions(row['kind'], json.loads(row['answers']))[offset:offset+5], answers[offset:offset+5]):
                     e.add_field(name=q, value=discord.utils.escape_markdown(a)[:1024], inline=False)
                 embeds.append(e)
             for e in embeds:
@@ -280,9 +333,7 @@ class Tickets(commands.Cog):
             channel = i.guild.get_channel(cfg['panel_channel_id'])
             if not isinstance(channel, discord.TextChannel):
                 return await reply(i, 'Не найден текстовый канал для панели.')
-            e = discord.Embed(title='🎫 Тикетная ТОРТИКА — давай разберёмся',
-                              description='Есть жалоба, хочешь обжаловать наказание или попасть в команду? Выбирай кнопку ниже.\n\n'+RECRUIT,
-                              color=0xF2B66D)
+            e = panel_embed()
             rows = await self.bot.db.rows('SELECT message_id FROM ticket_panels WHERE guild_id=?', (i.guild_id,))
             message = None
             if rows:
