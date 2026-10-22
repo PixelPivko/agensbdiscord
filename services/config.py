@@ -19,6 +19,22 @@ def load_config(path: str = "config/config.yml", *, offline: bool = False) -> di
         for name in ("staff_role_id", "verification_channel_id", "modlog_channel_id"):
             if type(g.get(name)) is not int or g[name] < 0 or (not offline and g[name] == 0):
                 raise ValueError(f"Configure a positive {name} for guild {guild_id}")
+        tickets = g.get("tickets")
+        if tickets is not None:
+            if not isinstance(tickets, dict) or any(type(tickets.get(k)) is not int or tickets[k] <= 0 for k in ("panel_channel_id", "category_id")):
+                raise ValueError("Invalid tickets channel/category IDs")
+        if tickets is not None:
+            routing = tickets.get("routing")
+            if not isinstance(routing, dict):
+                raise ValueError("Configure tickets.routing")
+            groups = [routing.get("common"), routing.get("vmn")]
+            for section in ("servers", "admin"):
+                mapping = routing.get(section)
+                if not isinstance(mapping, dict):
+                    raise ValueError("Invalid ticket role routing")
+                groups.extend(mapping.get(server) for server in ("mrp", "classic", "discord"))
+            if any(not isinstance(group, list) or not group or any(type(rid) is not int or rid <= 0 or rid == guild_id for rid in group) for group in groups):
+                raise ValueError("Ticket reviewer roles must be nonempty positive IDs, never everyone")
         trap = g.get("trap", {})
         if trap and (type(trap.get("enabled")) is not bool or type(trap.get("channel_id")) is not int or trap["channel_id"] <= 0):
             raise ValueError("Invalid trap configuration")

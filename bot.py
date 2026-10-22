@@ -15,6 +15,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
+from cogs.tickets import Tickets
 from cogs.trap import Trap
 from cogs.automod import Automod
 from cogs.common import embed, reply
@@ -110,6 +111,7 @@ class SecurityBot(commands.Bot):
         await self.add_cog(Levels(self))
         await self.add_cog(Automod(self))
         await self.add_cog(Trap(self))
+        await self.add_cog(Tickets(self))
         for command in self.tree.get_commands():
             command.guild_only = True
         self.verification.register_views()

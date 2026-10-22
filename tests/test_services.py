@@ -133,7 +133,7 @@ async def test_commands_serialize_and_privileged_commands_have_checks(config, tm
     async with SecurityBot(config) as bot:
         await bot.setup_local()
         expected = {"warn", "warnings", "unwarn", "clearwarns", "timeout", "untimeout", "kick", "ban",
-                    "unban", "purge", "userinfo", "modlog", "verification", "level", "leaderboard", "xp", "levels"}
+                    "unban", "purge", "userinfo", "modlog", "verification", "verify", "level", "leaderboard", "xp", "levels", "tickets_panel"}
         assert {c.name for c in bot.tree.get_commands()} == expected
         for cmd in bot.tree.walk_commands():
             if not isinstance(cmd, app_commands.Group) and cmd.name not in {"level", "leaderboard"}:

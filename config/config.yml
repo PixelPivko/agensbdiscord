@@ -1,8 +1,44 @@
 database: data/security_agent.db
 logging_level: INFO
-# TORTIK PROJECT settings supplied by the user. Token belongs in .env, never here.
 guilds:
   1546592219169824939:
+    tickets:
+      panel_channel_id: 1546592221082685463
+      category_id: 1546592223402004598
+      routing:
+        common:
+        - 1546592219438522592
+        - 1562901484360699984
+        - 1546592219169824942
+        servers:
+          mrp:
+          - 1546592219438522590
+          - 1562914244972904528
+          - 1562921243081179186
+          - 1562922507797794816
+          classic:
+          - 1562899777253941309
+          - 1562914578810011648
+          - 1562953787675774976
+          - 1562953562676396083
+          discord:
+          - 1562901484360699984
+          - 1562914862126989422
+          - 1562958771586727986
+          - 1562958045393326182
+        admin:
+          mrp:
+          - 1546592219438522592
+          - 1546592219438522590
+          - 1562914244972904528
+          classic:
+          - 1562899777253941309
+          - 1562914578810011648
+          discord:
+          - 1562901484360699984
+          - 1562914862126989422
+        vmn:
+        - 1546592219438522589
     trap:
       enabled: true
       channel_id: 1562603037506142228
@@ -10,13 +46,13 @@ guilds:
     verification_channel_id: 1556072335000469545
     modlog_channel_id: 1556072085363626115
     join_roles:
-      - 1546592219220152341
-      - 1546592219220152345
-      - 1546592219274940457
-      - 1546592219274940464
-      - 1546592219325145179
-      - 1546592219325145181
-      - 1546592219325145180
+    - 1546592219220152341
+    - 1546592219220152345
+    - 1546592219274940457
+    - 1546592219274940464
+    - 1546592219325145179
+    - 1546592219325145181
+    - 1546592219325145180
     verification:
       pending_role_id: 1557842948903805040
       captcha_ttl_seconds: 600
@@ -25,10 +61,15 @@ guilds:
       give_join_roles_before_verification: false
     moderation:
       warn_actions:
-        3: {timeout_minutes: 10}
-        5: {timeout_minutes: 60}
-        7: {timeout_minutes: 1440}
-        10: {notify_staff: true, ban: false}
+        3:
+          timeout_minutes: 10
+        5:
+          timeout_minutes: 60
+        7:
+          timeout_minutes: 1440
+        10:
+          notify_staff: true
+          ban: false
     profanity:
       blacklist: config/profanity.json
       whitelist: config/whitelist.json
@@ -42,7 +83,10 @@ guilds:
       xp_max: 3
       ignored_channels: []
       ignored_roles: []
-      command_prefixes: ["/", "!", "?"]
+      command_prefixes:
+      - /
+      - '!'
+      - '?'
       duplicate_window_seconds: 3600
       spam_window_seconds: 10
       spam_max_messages: 5
@@ -51,8 +95,28 @@ guilds:
       repair_interval_seconds: 900
       sync_delay_seconds: 0.5
       brackets:
-        - {min: 0, max: 4, roles: [1546592219220152347, 1546592219274940458]}
-        - {min: 5, max: 9, roles: [1546592219220152348, 1546592219274940460]}
-        - {min: 10, max: 14, roles: [1546592219220152346, 1546592219274940459]}
-        - {min: 15, max: 19, roles: [1546592219220152349, 1546592219274940461]}
-        - {min: 20, max: 1000, roles: [1546592219274940456, 1546592219274940462]}
+      - min: 0
+        max: 4
+        roles:
+        - 1546592219220152347
+        - 1546592219274940458
+      - min: 5
+        max: 9
+        roles:
+        - 1546592219220152348
+        - 1546592219274940460
+      - min: 10
+        max: 14
+        roles:
+        - 1546592219220152346
+        - 1546592219274940459
+      - min: 15
+        max: 19
+        roles:
+        - 1546592219220152349
+        - 1546592219274940461
+      - min: 20
+        max: 1000
+        roles:
+        - 1546592219274940456
+        - 1546592219274940462
