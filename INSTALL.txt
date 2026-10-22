@@ -1,0 +1,1 @@
+Upload these files over the existing project and restart. Back up config first. staff_role_id is now null: global staff commands require owner/Administrator. Ticket routing unchanged. Invalid join role IDs now appear in startup logs; those errors are still enforced.

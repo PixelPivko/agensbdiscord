@@ -16,9 +16,12 @@ def load_config(path: str = "config/config.yml", *, offline: bool = False) -> di
     for guild_id, g in cfg["guilds"].items():
         if type(guild_id) is not int or guild_id < 0 or (not offline and not guild_id):
             raise ValueError("Replace guild ID 0 in config/config.yml with your Discord server ID")
-        for name in ("staff_role_id", "verification_channel_id", "modlog_channel_id"):
+        for name in ("verification_channel_id", "modlog_channel_id"):
             if type(g.get(name)) is not int or g[name] < 0 or (not offline and g[name] == 0):
                 raise ValueError(f"Configure a positive {name} for guild {guild_id}")
+        g.setdefault("staff_role_id", None)
+        if g["staff_role_id"] is not None and (type(g["staff_role_id"]) is not int or g["staff_role_id"] <= 0):
+            raise ValueError("staff_role_id must be null or a positive role ID")
         tickets = g.get("tickets")
         if tickets is not None:
             if not isinstance(tickets, dict) or any(type(tickets.get(k)) is not int or tickets[k] <= 0 for k in ("panel_channel_id", "category_id")):

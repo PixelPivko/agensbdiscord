@@ -42,7 +42,7 @@ guilds:
     trap:
       enabled: true
       channel_id: 1562603037506142228
-    staff_role_id: 1546592219379666996
+    staff_role_id: null
     verification_channel_id: 1556072335000469545
     modlog_channel_id: 1556072085363626115
     join_roles:

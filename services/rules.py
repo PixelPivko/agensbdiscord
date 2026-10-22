@@ -60,7 +60,7 @@ class AntiProfanitySystem:
 
 def is_staff(member, config: dict) -> bool:
     return (member.id == member.guild.owner_id or member.guild_permissions.administrator
-            or any(role.id == config["staff_role_id"] for role in member.roles))
+            or any(role.id == config.get("staff_role_id") for role in member.roles))
 
 
 def hierarchy_error(actor, target, bot, *, timeout: bool = False) -> str | None:

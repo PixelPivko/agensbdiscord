@@ -10,20 +10,26 @@ async def startup_check(bot, guild):
     cfg = bot.cfg(guild.id)
     me = guild.me
     missing = [name for name in REQUIRED if not getattr(me.guild_permissions, name)]
-    staff = guild.get_role(cfg["staff_role_id"])
-    report = {"guild": guild.id, "database": "OK", "staff_role": "OK" if staff else "MISSING",
+    staff_id = cfg.get("staff_role_id")
+    staff = guild.get_role(staff_id) if staff_id else None
+    report = {"guild": guild.id, "database": "OK", "staff_role": "DISABLED (administrators only)" if not staff_id else ("OK" if staff else "MISSING"),
               "missing_permissions": missing, "roles": {}, "channels": {}}
-    errors = len(missing) + int(staff is None)
+    errors = len(missing) + int(bool(staff_id) and staff is None)
     for group, ids in (("join", cfg["join_roles"]),
                        ("level", [r for b in cfg["levels"]["brackets"] for r in b["roles"]]),
                        ("pending", [cfg["verification"]["pending_role_id"]])):
         ok = 0
+        invalid_ids = []
         for rid in ids:
             role = guild.get_role(rid)
             valid = (role is not None and not role.managed and not role.is_default() and role < me.top_role
                      and not role.permissions.administrator and not role.permissions.manage_roles)
             ok += int(valid)
+            if not valid:
+                invalid_ids.append(rid)
         report["roles"][group] = f"{ok}/{len(ids)}"
+        if invalid_ids:
+            report["roles"][group + "_invalid_ids"] = invalid_ids
         errors += len(ids) - ok
     for name in ("verification_channel_id", "modlog_channel_id"):
         channel = guild.get_channel(cfg[name])
